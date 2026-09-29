@@ -37,6 +37,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var game: GameEngine
     private lateinit var tracker: BasketballTracker
+    private lateinit var commentary: CommentaryEngine
+    private lateinit var commentaryButton: Button
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera() else statusText.text = "カメラ権限が必要です"
@@ -58,10 +60,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        commentary = CommentaryEngine(CommentaryMode.LIVE)
         game = GameEngine(
             targetScore = 10,
             onScoreChanged = { a, b -> updateScoreUi(a, b) },
-            onAnnouncement = { speak(it) },
+            onGameStarted = { target ->
+                commentary.onGameStart(target)?.let { speak(it) }
+            },
+            onScoreEvent = { event ->
+                commentary.onScore(event)?.let { speak(it) }
+            },
             onGameOver = { winner, a, b -> statusText.text = "GAME: $winner WIN  $a-$b" }
         )
         tracker = BasketballTracker { player, points ->
@@ -86,6 +94,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun bindControls() {
+        commentaryButton = findViewById(R.id.commentaryButton)
+        commentaryButton.text = commentary.mode.buttonLabel
+        commentaryButton.setOnClickListener {
+            commentary.mode = commentary.mode.next()
+            commentaryButton.text = commentary.mode.buttonLabel
+            if (commentary.mode == CommentaryMode.OFF) tts?.stop()
+            statusText.text = commentary.mode.buttonLabel
+        }
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
             overlayView.calibrateHoop { rect ->
@@ -114,6 +130,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.resetButton).setOnClickListener {
             game.reset()
             tracker.resetSession()
+            commentary.reset()
+            tts?.stop()
             statusText.text = "リセットしました"
         }
         findViewById<Button>(R.id.a1Button).setOnClickListener { game.addScore('A', 1) }
@@ -192,7 +210,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "score-${SystemClock.uptimeMillis()}")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "commentary-${SystemClock.uptimeMillis()}")
     }
 
     override fun onDestroy() {
