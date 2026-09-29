@@ -143,7 +143,7 @@ class DebugLogger(context: Context) {
     }
 
     private fun csv(value: String): String {
-        val escaped = value.replace(""", """")
-        return ""$escaped""
+        val escaped = value.replace("\"", "\"\"")
+        return "\"$escaped\""
     }
 }
