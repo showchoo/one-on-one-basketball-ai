@@ -1,4 +1,14 @@
 <resources>
     <color name="black">#000000</color>
     <color name="white">#FFFFFF</color>
+    <color name="basketball_orange">#FF6A00</color>
+    <color name="basketball_orange_dark">#D94F00</color>
+    <color name="hud_black">#E614171B</color>
+    <color name="hud_black_soft">#C9181B20</color>
+    <color name="hud_panel">#E61D2128</color>
+    <color name="hud_stroke">#66FF8A33</color>
+    <color name="hud_text_secondary">#B8C0CC</color>
+    <color name="player_a">#59E391</color>
+    <color name="player_b">#F26AD5</color>
+    <color name="danger_red">#D94343</color>
 </resources>
