@@ -2,6 +2,7 @@ package jp.showchoo.oneononeai
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
@@ -25,6 +26,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -56,6 +58,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var tracker: BasketballTracker
     private lateinit var commentary: CommentaryEngine
     private lateinit var commentaryButton: Button
+    private lateinit var debugLogger: DebugLogger
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera() else statusText.text = "カメラ権限が必要です"
@@ -74,6 +77,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         perfText = findViewById(R.id.perfText)
         previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
 
+        debugLogger = DebugLogger(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -82,16 +86,44 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             targetScore = 10,
             onScoreChanged = { a, b -> updateScoreUi(a, b) },
             onGameStarted = { target ->
+                debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target")
                 commentary.onGameStart(target)?.let { speak(it) }
             },
             onScoreEvent = { event ->
+                debugLogger.logEvent(
+                    eventType = "SCORE_EVENT",
+                    scoreA = event.scoreA,
+                    scoreB = event.scoreB,
+                    points = event.points,
+                    detail = "player=${event.player}; gameOver=${event.gameOver}"
+                )
                 commentary.onScore(event)?.let { speak(it) }
             },
-            onGameOver = { winner, a, b -> statusText.text = "GAME: $winner WIN  $a-$b" }
+            onGameOver = { winner, a, b ->
+                debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner")
+                statusText.text = "GAME: $winner WIN  $a-$b"
+            }
         )
-        tracker = BasketballTracker { player, points ->
-            runOnUiThread { game.addScore(player, points) }
-        }
+        tracker = BasketballTracker(
+            onAutomaticScore = { player, points ->
+                debugLogger.logEvent(
+                    eventType = "AUTO_SCORE_REQUEST",
+                    scoreA = game.scoreA,
+                    scoreB = game.scoreB,
+                    points = points,
+                    detail = "player=$player"
+                )
+                runOnUiThread { game.addScore(player, points) }
+            },
+            onDebugEvent = { event ->
+                debugLogger.logEvent(
+                    eventType = "TRACKER_EVENT",
+                    scoreA = game.scoreA,
+                    scoreB = game.scoreB,
+                    detail = event
+                )
+            }
+        )
 
         bindControls()
         cameraExecutor.execute {
@@ -117,6 +149,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             commentary.mode = commentary.mode.next()
             commentaryButton.text = commentary.mode.buttonLabel
             if (commentary.mode == CommentaryMode.OFF) tts?.stop()
+            debugLogger.logEvent("COMMENTARY_MODE", detail = commentary.mode.name)
             statusText.text = commentary.mode.buttonLabel
         }
 
@@ -124,10 +157,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             showVoiceSettings()
         }
 
+        findViewById<Button>(R.id.debugLogButton).setOnClickListener {
+            shareDebugLog()
+        }
+
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
             overlayView.calibrateHoop { rect ->
                 tracker.hoopRect = rect
+                debugLogger.logEvent("HOOP_CALIBRATED", detail = "rect=${rect.left}|${rect.top}|${rect.right}|${rect.bottom}")
                 overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
                 statusText.text = "リング設定済み / 3Pラインを設定"
             }
@@ -136,6 +174,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             statusText.text = "3Pラインを左から5点タップ"
             overlayView.calibrateThreePointLine { points ->
                 tracker.threePointLine = points
+                debugLogger.logEvent(
+                    "THREE_POINT_CALIBRATED",
+                    detail = points.joinToString(";") { "${it.x}|${it.y}" }
+                )
                 overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
                 statusText.text = "3Pライン設定済み"
             }
@@ -145,21 +187,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 statusText.text = "先にリング位置を設定してください"
             } else {
                 tracker.resetSession()
+                debugLogger.logEvent(
+                    "START_PRESSED",
+                    detail = "threePointPoints=${tracker.threePointLine.size}"
+                )
                 game.start()
                 statusText.text = if (tracker.threePointLine.size >= 2) "GAME RUNNING / 自動1・2点" else "GAME RUNNING / 3P未設定なので1点固定"
             }
         }
         findViewById<Button>(R.id.resetButton).setOnClickListener {
+            debugLogger.logEvent("RESET_PRESSED", scoreA = game.scoreA, scoreB = game.scoreB)
             game.reset()
             tracker.resetSession()
             commentary.reset()
             tts?.stop()
             statusText.text = "リセットしました"
         }
-        findViewById<Button>(R.id.a1Button).setOnClickListener { game.addScore('A', 1) }
-        findViewById<Button>(R.id.a2Button).setOnClickListener { game.addScore('A', 2) }
-        findViewById<Button>(R.id.b1Button).setOnClickListener { game.addScore('B', 1) }
-        findViewById<Button>(R.id.b2Button).setOnClickListener { game.addScore('B', 2) }
+        findViewById<Button>(R.id.a1Button).setOnClickListener { addManualScore('A', 1) }
+        findViewById<Button>(R.id.a2Button).setOnClickListener { addManualScore('A', 2) }
+        findViewById<Button>(R.id.b1Button).setOnClickListener { addManualScore('B', 1) }
+        findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
     }
 
     private fun showVoiceSettings() {
@@ -260,6 +307,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     .apply()
 
                 applySavedTtsSettings()
+                debugLogger.logEvent(
+                    "VOICE_SETTINGS_SAVED",
+                    detail = "voice=${selectedVoice?.name.orEmpty()}; rate=$rate; pitch=$pitch"
+                )
                 statusText.text = "実況音声設定を保存しました"
             }
             .setNegativeButton("キャンセル") { _, _ ->
@@ -309,6 +360,40 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         engine.setPitch(pitch)
     }
 
+
+    private fun addManualScore(player: Char, points: Int) {
+        debugLogger.logEvent(
+            eventType = "MANUAL_SCORE_REQUEST",
+            scoreA = game.scoreA,
+            scoreB = game.scoreB,
+            points = points,
+            detail = "player=$player"
+        )
+        game.addScore(player, points)
+    }
+
+    private fun shareDebugLog() {
+        try {
+            debugLogger.logEvent("LOG_SHARE", scoreA = game.scoreA, scoreB = game.scoreB)
+            debugLogger.flush()
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                debugLogger.currentFile
+            )
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "1on1 AI デバッグログ")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "デバッグログを共有"))
+        } catch (e: Exception) {
+            debugLogger.logEvent("LOG_SHARE_ERROR", detail = e.toString())
+            statusText.text = "ログ共有に失敗: ${e.javaClass.simpleName}"
+        }
+    }
+
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -348,6 +433,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         result.imageHeight,
                         SystemClock.uptimeMillis()
                     )
+                    debugLogger.logFrame(
+                        snapshot = snapshot,
+                        inferenceMs = result.inferenceMs,
+                        detectionCount = result.detections.size,
+                        scoreA = game.scoreA,
+                        scoreB = game.scoreB
+                    )
                     runOnUiThread {
                         overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
                         overlayView.update(snapshot, result.imageWidth, result.imageHeight)
@@ -355,6 +447,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         if (game.running) statusText.text = snapshot.status
                     }
                 } catch (e: Exception) {
+                    debugLogger.logEvent("AI_ERROR", detail = e.toString())
                     runOnUiThread { perfText.text = "AI error: ${e.javaClass.simpleName}" }
                 } finally {
                     image.close()
@@ -386,6 +479,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        debugLogger.logEvent("APP_END", scoreA = game.scoreA, scoreB = game.scoreB)
+        debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
         tts?.stop()
