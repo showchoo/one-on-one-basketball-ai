@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
@@ -15,132 +16,360 @@
         android:layout_height="match_parent" />
 
     <LinearLayout
+        android:id="@+id/topScoreboard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:padding="8dp"
-        android:background="#99000000">
+        android:orientation="vertical"
+        android:background="@drawable/hud_scoreboard_bg"
+        android:paddingStart="14dp"
+        android:paddingTop="7dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="7dp"
+        android:elevation="8dp">
 
-        <TextView
-            android:id="@+id/playerA"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="A  0"
-            android:textColor="#FFFFFF"
-            android:textSize="32sp"
-            android:textStyle="bold"
-            android:gravity="center" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <View
+                    android:layout_width="5dp"
+                    android:layout_height="54dp"
+                    android:background="@color/player_a" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PLAYER A"
+                        android:textColor="@color/player_a"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.10" />
+
+                    <TextView
+                        android:id="@+id/playerA"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="46sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-black"
+                        android:includeFontPadding="false" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.45"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="10dp">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1 ON 1"
+                        android:textColor="@color/basketball_orange"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.16" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/hud_chip_bg"
+                        android:text="FIRST TO 10"
+                        android:textColor="@color/hud_text_secondary"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.08" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/hud_status_bg"
+                    android:text="SETUP / リング位置を設定"
+                    android:textColor="@color/white"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="end|center_vertical">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="end"
+                    android:paddingEnd="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PLAYER B"
+                        android:textColor="@color/player_b"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.10" />
+
+                    <TextView
+                        android:id="@+id/playerB"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="46sp"
+                        android:textStyle="bold"
+                        android:fontFamily="sans-serif-black"
+                        android:includeFontPadding="false" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="5dp"
+                    android:layout_height="54dp"
+                    android:background="@color/player_b" />
+            </LinearLayout>
+        </LinearLayout>
 
         <TextView
-            android:id="@+id/statusText"
+            android:id="@+id/perfText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="リング位置を設定"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:paddingHorizontal="16dp" />
-
-        <TextView
-            android:id="@+id/playerB"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="0  B"
-            android:textColor="#FFFFFF"
-            android:textSize="32sp"
-            android:textStyle="bold"
-            android:gravity="center" />
+            android:layout_gravity="end"
+            android:layout_marginTop="-18dp"
+            android:text="AI -- ms"
+            android:textColor="#8FA0B2"
+            android:textSize="10sp"
+            android:letterSpacing="0.04" />
     </LinearLayout>
 
-    <HorizontalScrollView
+    <LinearLayout
+        android:id="@+id/bottomHud"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#B3000000"
-        android:fillViewport="true">
+        android:orientation="vertical"
+        android:background="@drawable/hud_panel_bg"
+        android:paddingStart="10dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="9dp"
+        android:elevation="8dp">
 
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:padding="8dp">
+            android:gravity="center_vertical">
 
-            <Button
-                android:id="@+id/calibrateHoopButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="リング位置" />
-
-            <Button
-                android:id="@+id/calibrateThreeButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="3Pライン" />
-
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/startButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="START" />
+                style="@style/Widget.OneOnOneAI.Button.Primary"
+                android:layout_width="124dp"
+                android:layout_height="46dp"
+                android:text="▶ START"
+                android:textSize="15sp"
+                app:iconGravity="textStart" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/resetButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="RESET" />
+                style="@style/Widget.OneOnOneAI.Button.Secondary"
+                android:layout_width="96dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="7dp"
+                android:text="RESET"
+                android:textColor="#FF8C8C"
+                app:strokeColor="#88D94343" />
 
-            <Button
-                android:id="@+id/commentaryButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="実況: ON" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/controlsToggleButton"
+                style="@style/Widget.OneOnOneAI.Button.Secondary"
+                android:layout_width="112dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="7dp"
+                android:text="操作を閉じる" />
 
-            <Button
-                android:id="@+id/voiceSettingsButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="実況音声" />
-
-            <Button
-                android:id="@+id/debugLogButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ログ共有" />
-
-            <Button
-                android:id="@+id/a1Button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="A +1" />
-
-            <Button
-                android:id="@+id/a2Button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="A +2" />
-
-            <Button
-                android:id="@+id/b1Button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="B +1" />
-
-            <Button
-                android:id="@+id/b2Button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="B +2" />
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
             <TextView
-                android:id="@+id/perfText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="AI -- ms"
-                android:textColor="#FFFFFF"
-                android:padding="12dp" />
+                android:background="@drawable/hud_chip_bg"
+                android:text="AUTO REF"
+                android:textColor="@color/basketball_orange"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.10" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/commentaryButton"
+                style="@style/Widget.OneOnOneAI.Button.Secondary"
+                android:layout_width="132dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="8dp"
+                android:text="実況: ON"
+                android:textColor="@color/basketball_orange"
+                app:strokeColor="@color/basketball_orange" />
         </LinearLayout>
-    </HorizontalScrollView>
+
+        <LinearLayout
+            android:id="@+id/advancedControls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.45"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="COURT SETUP"
+                    android:textColor="@color/hud_text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.12" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/calibrateHoopButton"
+                        style="@style/Widget.OneOnOneAI.Button.Secondary"
+                        android:layout_width="108dp"
+                        android:layout_height="42dp"
+                        android:text="◎ リング" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/calibrateThreeButton"
+                        style="@style/Widget.OneOnOneAI.Button.Secondary"
+                        android:layout_width="108dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:text="⌒ 3Pライン" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/voiceSettingsButton"
+                        style="@style/Widget.OneOnOneAI.Button.Secondary"
+                        android:layout_width="104dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:text="音声" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/debugLogButton"
+                        style="@style/Widget.OneOnOneAI.Button.Secondary"
+                        android:layout_width="104dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:text="ログ共有" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="50dp"
+                android:layout_marginHorizontal="10dp"
+                android:background="#44FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="end">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="MANUAL SCORE"
+                    android:textColor="@color/hud_text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.12" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/a1Button"
+                        style="@style/Widget.OneOnOneAI.Button.ScoreA"
+                        android:layout_width="74dp"
+                        android:layout_height="42dp"
+                        android:text="A +1" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/a2Button"
+                        style="@style/Widget.OneOnOneAI.Button.ScoreA"
+                        android:layout_width="74dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="5dp"
+                        android:text="A +2" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/b1Button"
+                        style="@style/Widget.OneOnOneAI.Button.ScoreB"
+                        android:layout_width="74dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="10dp"
+                        android:text="B +1" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/b2Button"
+                        style="@style/Widget.OneOnOneAI.Button.ScoreB"
+                        android:layout_width="74dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="5dp"
+                        android:text="B +2" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
 </FrameLayout>
