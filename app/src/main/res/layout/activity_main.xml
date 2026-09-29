@@ -105,6 +105,12 @@
                 android:text="実況音声" />
 
             <Button
+                android:id="@+id/debugLogButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ログ共有" />
+
+            <Button
                 android:id="@+id/a1Button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
