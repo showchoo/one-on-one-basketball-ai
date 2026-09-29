@@ -5,7 +5,8 @@ import android.graphics.RectF
 import kotlin.math.hypot
 
 class BasketballTracker(
-    private val onAutomaticScore: (Char, Int) -> Unit
+    private val onAutomaticScore: (Char, Int) -> Unit,
+    private val onDebugEvent: (String) -> Unit = {}
 ) {
     var hoopRect: RectF? = null
     var threePointLine: List<PointF> = emptyList()
@@ -32,6 +33,7 @@ class BasketballTracker(
         currentShotValue = 1
         hoopState = HoopState.WAIT_ABOVE
         armedAtMs = 0L
+        onDebugEvent("TRACKER_RESET")
     }
 
     fun update(detections: List<AiDetection>, width: Int, height: Int, nowMs: Long): TrackerSnapshot {
@@ -59,6 +61,7 @@ class BasketballTracker(
                 currentShotValue = calculateShotValue(lastPossessor!!)
                 shotStartedMs = nowMs
                 status = "${currentShotPlayer} シュート候補 ${currentShotValue}点"
+                onDebugEvent("SHOT_CANDIDATE player=${currentShotPlayer} value=${currentShotValue}")
             }
             wasBallNearPlayer = near
 
@@ -126,17 +129,20 @@ class BasketballTracker(
                 if (inLaneX && y < hoop.top) {
                     hoopState = HoopState.ARMED
                     armedAtMs = nowMs
+                    onDebugEvent("HOOP_ARMED ballX=$x ballY=$y")
                 }
             }
             HoopState.ARMED -> {
                 if (nowMs - armedAtMs > 1600L) {
                     hoopState = HoopState.WAIT_ABOVE
+                    onDebugEvent("HOOP_TIMEOUT")
                     return
                 }
                 if (inLaneX && y > hoop.bottom) {
                     val shooter = currentShotPlayer ?: lastPossessor
                     if (shooter != null && nowMs - lastScoreMs > 1800L) {
                         lastScoreMs = nowMs
+                        onDebugEvent("AUTO_SCORE player=$shooter points=$currentShotValue")
                         onAutomaticScore(shooter, currentShotValue)
                     }
                     currentShotPlayer = null
