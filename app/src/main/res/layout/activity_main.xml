@@ -99,6 +99,12 @@
                 android:text="実況: ON" />
 
             <Button
+                android:id="@+id/voiceSettingsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="実況音声" />
+
+            <Button
                 android:id="@+id/a1Button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
