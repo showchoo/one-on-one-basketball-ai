@@ -1,9 +1,9 @@
-# One-on-One Basketball AI — Android Prototype v0.1
+# One-on-One Basketball AI — Android Prototype v0.2
 
 Androidスマホ1台を三脚に固定し、ハーフコート1on1（1点/2点・10点先取）の自動スコア係を目指す試作です。
 **green-reader-prototype とは完全に別プロジェクト**です。
 
-## v0.1で入っているもの
+## v0.2で入っているもの
 
 - CameraXのリアルタイムカメラ表示（横画面）
 - EfficientDet-Lite0（COCO）を端末内で実行
@@ -16,6 +16,16 @@ Androidスマホ1台を三脚に固定し、ハーフコート1on1（1点/2点�
 - シューター足元と3Pラインの位置から 1点 / 2点を暫定判定
 - 10点先取
 - Android TextToSpeech による得点読み上げ（Bluetoothスピーカーへ通常の音声出力として流せる）
+- 端末内 `CommentaryEngine` によるリアルタイム簡易実況
+  - 1点 / 2点
+  - 現在スコア
+  - 同点
+  - 逆転
+  - 3連続以上の得点
+  - ゲームポイント
+  - 9対9
+  - 勝敗
+- 実況モードを `実況ON → 得点のみ → OFF` の3段階で切替
 - 誤判定検証用の A+1 / A+2 / B+1 / B+2 手動ボタン
 - 推論時間(ms)を画面表示
 - GitHub Actionsでdebug APKを自動生成
@@ -33,10 +43,11 @@ Androidスマホ1台を三脚に固定し、ハーフコート1on1（1点/2点�
 3. `リング位置` → 画面上のリング中央をタップ。
 4. `3Pライン` → 見えている3Pラインを左から右へ5点タップ。
 5. BluetoothスピーカーをAndroidの通常設定から接続。
-6. `START`。
-7. A/Bの枠とボールの黄色い枠が追従するか確認。
+6. `実況: ON` / `実況: 得点のみ` / `実況: OFF` を選ぶ。
+7. `START`。
+8. A/Bの枠とボールの黄色い枠が追従するか確認。
 
-## 重要: v0.1の限界
+## 重要: v0.2の限界
 
 これは「商品版」ではなく、**arrows We2でリアルタイム認識が成立するか確認する技術プロトタイプ**です。
 
@@ -49,7 +60,7 @@ Androidスマホ1台を三脚に固定し、ハーフコート1on1（1点/2点�
 - 「ボールが上からリングを通過」の2D軌跡判定なので、リング手前を通過しただけのボールを誤検出する可能性がある。
 - ファウル判定は未実装。
 
-## v0.2でやること
+## v0.3以降でやること
 
 実コートの動画/ログを集め、以下を優先します。
 
@@ -74,7 +85,7 @@ GitHubでは `.github/workflows/build-apk.yml` が `app-debug.apk` をArtifact�
 
 ## 技術メモ
 
-CameraX 1.6.2 + TensorFlow Lite Task Vision 0.4.4 を使用しています。
+CameraX 1.4.2 + TensorFlow Lite Task Vision 0.4.4 を使用しています。
 モデルはCOCO学習済みEfficientDet-Lite0で、v0.1では `person` と `sports ball` のみ利用します。
 
 ## ライセンス
