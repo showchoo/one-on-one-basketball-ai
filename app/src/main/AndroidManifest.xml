@@ -6,6 +6,16 @@
         android:allowBackup="true"
         android:label="1on1 AI Score"
         android:theme="@style/Theme.OneOnOneAI">
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:screenOrientation="landscape"
