@@ -3,7 +3,8 @@ package jp.showchoo.oneononeai
 class GameEngine(
     private val targetScore: Int = 10,
     private val onScoreChanged: (Int, Int) -> Unit,
-    private val onAnnouncement: (String) -> Unit,
+    private val onGameStarted: (Int) -> Unit,
+    private val onScoreEvent: (ScoreEvent) -> Unit,
     private val onGameOver: (Char, Int, Int) -> Unit
 ) {
     var scoreA: Int = 0
@@ -16,7 +17,7 @@ class GameEngine(
     fun start() {
         if (scoreA >= targetScore || scoreB >= targetScore) reset()
         running = true
-        onAnnouncement("ゲームスタート")
+        onGameStarted(targetScore)
     }
 
     fun reset() {
@@ -29,13 +30,34 @@ class GameEngine(
     fun addScore(player: Char, points: Int) {
         if (!running) return
         val safePoints = points.coerceIn(1, 2)
-        if (player == 'A') scoreA += safePoints else if (player == 'B') scoreB += safePoints else return
+        val previousA = scoreA
+        val previousB = scoreB
+
+        when (player) {
+            'A' -> scoreA += safePoints
+            'B' -> scoreB += safePoints
+            else -> return
+        }
+
         onScoreChanged(scoreA, scoreB)
-        onAnnouncement("プレイヤー $player、${safePoints}ポイント。${scoreA}対${scoreB}")
-        if (scoreA >= targetScore || scoreB >= targetScore) {
+
+        val gameOver = scoreA >= targetScore || scoreB >= targetScore
+        onScoreEvent(
+            ScoreEvent(
+                player = player,
+                points = safePoints,
+                previousScoreA = previousA,
+                previousScoreB = previousB,
+                scoreA = scoreA,
+                scoreB = scoreB,
+                targetScore = targetScore,
+                gameOver = gameOver
+            )
+        )
+
+        if (gameOver) {
             running = false
             val winner = if (scoreA >= targetScore) 'A' else 'B'
-            onAnnouncement("ゲーム。プレイヤー $winner の勝ち。${scoreA}対${scoreB}")
             onGameOver(winner, scoreA, scoreB)
         }
     }
