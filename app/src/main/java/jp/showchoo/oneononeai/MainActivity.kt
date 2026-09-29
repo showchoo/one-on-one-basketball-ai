@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.util.Size
+import android.view.View
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -58,6 +59,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var tracker: BasketballTracker
     private lateinit var commentary: CommentaryEngine
     private lateinit var commentaryButton: Button
+    private lateinit var controlsToggleButton: Button
+    private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -143,6 +146,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun bindControls() {
+        advancedControls = findViewById(R.id.advancedControls)
+        controlsToggleButton = findViewById(R.id.controlsToggleButton)
+        controlsToggleButton.setOnClickListener {
+            val expand = advancedControls.visibility != View.VISIBLE
+            setControlsExpanded(expand)
+        }
+
         commentaryButton = findViewById(R.id.commentaryButton)
         commentaryButton.text = commentary.mode.buttonLabel
         commentaryButton.setOnClickListener {
@@ -192,7 +202,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     detail = "threePointPoints=${tracker.threePointLine.size}"
                 )
                 game.start()
-                statusText.text = if (tracker.threePointLine.size >= 2) "GAME RUNNING / 自動1・2点" else "GAME RUNNING / 3P未設定なので1点固定"
+                setControlsExpanded(false)
+                statusText.text = if (tracker.threePointLine.size >= 2) "LIVE / 自動1・2点判定" else "LIVE / 3P未設定・1点固定"
             }
         }
         findViewById<Button>(R.id.resetButton).setOnClickListener {
@@ -201,12 +212,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             tracker.resetSession()
             commentary.reset()
             tts?.stop()
-            statusText.text = "リセットしました"
+            setControlsExpanded(true)
+            statusText.text = "SETUP / リセットしました"
         }
         findViewById<Button>(R.id.a1Button).setOnClickListener { addManualScore('A', 1) }
         findViewById<Button>(R.id.a2Button).setOnClickListener { addManualScore('A', 2) }
         findViewById<Button>(R.id.b1Button).setOnClickListener { addManualScore('B', 1) }
         findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
+    }
+
+    private fun setControlsExpanded(expanded: Boolean) {
+        advancedControls.visibility = if (expanded) View.VISIBLE else View.GONE
+        controlsToggleButton.text = if (expanded) "操作を閉じる" else "操作を開く"
     }
 
     private fun showVoiceSettings() {
@@ -460,8 +477,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun updateScoreUi(a: Int, b: Int) {
-        playerAText.text = "A  $a"
-        playerBText.text = "$b  B"
+        playerAText.text = a.toString()
+        playerBText.text = b.toString()
     }
 
     override fun onInit(status: Int) {
