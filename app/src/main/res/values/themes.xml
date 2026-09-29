@@ -2,6 +2,11 @@
     <style name="Theme.OneOnOneAI" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowFullscreen">true</item>
-        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">@color/basketball_orange</item>
+        <item name="colorPrimary">@color/basketball_orange</item>
+        <item name="colorPrimaryVariant">@color/basketball_orange_dark</item>
+        <item name="colorSecondary">@color/basketball_orange</item>
     </style>
 </resources>
