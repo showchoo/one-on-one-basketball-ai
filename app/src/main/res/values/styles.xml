@@ -7,8 +7,8 @@
         <item name="android:minWidth">96dp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:letterSpacing">0.06</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
+        <item name="insetTop">0dp</item>
+        <item name="insetBottom">0dp</item>
     </style>
 
     <style name="Widget.OneOnOneAI.Button.Secondary" parent="Widget.MaterialComponents.Button.OutlinedButton">
@@ -19,8 +19,8 @@
         <item name="backgroundTint">@color/hud_black_soft</item>
         <item name="android:minHeight">42dp</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
+        <item name="insetTop">0dp</item>
+        <item name="insetBottom">0dp</item>
     </style>
 
     <style name="Widget.OneOnOneAI.Button.ScoreA" parent="Widget.MaterialComponents.Button">
@@ -30,8 +30,8 @@
         <item name="android:minHeight">42dp</item>
         <item name="android:minWidth">74dp</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
+        <item name="insetTop">0dp</item>
+        <item name="insetBottom">0dp</item>
     </style>
 
     <style name="Widget.OneOnOneAI.Button.ScoreB" parent="Widget.MaterialComponents.Button">
@@ -41,7 +41,7 @@
         <item name="android:minHeight">42dp</item>
         <item name="android:minWidth">74dp</item>
         <item name="android:textStyle">bold</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
+        <item name="insetTop">0dp</item>
+        <item name="insetBottom">0dp</item>
     </style>
 </resources>
