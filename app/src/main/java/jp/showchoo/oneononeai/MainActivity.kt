@@ -1,16 +1,23 @@
 package jp.showchoo.oneononeai
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.util.Size
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -23,6 +30,15 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+    companion object {
+        private const val PREFS_NAME = "commentary_voice"
+        private const val PREF_VOICE_NAME = "voice_name"
+        private const val PREF_SPEECH_RATE = "speech_rate"
+        private const val PREF_PITCH = "pitch"
+        private const val DEFAULT_SPEECH_RATE = 1.05f
+        private const val DEFAULT_PITCH = 1.0f
+    }
+
     private lateinit var previewView: PreviewView
     private lateinit var overlayView: OverlayView
     private lateinit var playerAText: TextView
@@ -34,6 +50,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Volatile private var detector: ObjectDetectorEngine? = null
     private var lastInferenceAt = 0L
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     private lateinit var game: GameEngine
     private lateinit var tracker: BasketballTracker
@@ -102,6 +119,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (commentary.mode == CommentaryMode.OFF) tts?.stop()
             statusText.text = commentary.mode.buttonLabel
         }
+
+        findViewById<Button>(R.id.voiceSettingsButton).setOnClickListener {
+            showVoiceSettings()
+        }
+
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
             overlayView.calibrateHoop { rect ->
@@ -138,6 +160,153 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.a2Button).setOnClickListener { game.addScore('A', 2) }
         findViewById<Button>(R.id.b1Button).setOnClickListener { game.addScore('B', 1) }
         findViewById<Button>(R.id.b2Button).setOnClickListener { game.addScore('B', 2) }
+    }
+
+    private fun showVoiceSettings() {
+        if (!ttsReady) {
+            statusText.text = "音声エンジン準備中です"
+            return
+        }
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val currentRate = prefs.getFloat(PREF_SPEECH_RATE, DEFAULT_SPEECH_RATE)
+        val currentPitch = prefs.getFloat(PREF_PITCH, DEFAULT_PITCH)
+        val savedVoiceName = prefs.getString(PREF_VOICE_NAME, null)
+
+        val allJapaneseVoices = tts?.voices
+            ?.filter { it.locale.language == Locale.JAPANESE.language }
+            ?.sortedBy { it.name }
+            .orEmpty()
+
+        val offlineVoices = allJapaneseVoices.filter { !it.isNetworkConnectionRequired }
+        val voices = if (offlineVoices.isNotEmpty()) offlineVoices else allJapaneseVoices
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+        }
+
+        val voiceLabel = TextView(this).apply { text = "音声" }
+        container.addView(voiceLabel)
+
+        val voiceSpinner = Spinner(this)
+        val voiceLabels = if (voices.isEmpty()) {
+            listOf("端末の標準日本語音声")
+        } else {
+            voices.mapIndexed { index, voice ->
+                val local = if (voice.isNetworkConnectionRequired) "オンライン" else "オフライン"
+                "音声 ${index + 1}  [$local]"
+            }
+        }
+        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceLabels)
+        if (voices.isNotEmpty()) {
+            val currentIndex = voices.indexOfFirst { it.name == savedVoiceName || it.name == tts?.voice?.name }
+            if (currentIndex >= 0) voiceSpinner.setSelection(currentIndex)
+        }
+        container.addView(voiceSpinner)
+
+        val rateLabel = TextView(this)
+        val rateSeek = SeekBar(this).apply {
+            max = 100
+            progress = rateToProgress(currentRate)
+        }
+        fun updateRateLabel() {
+            rateLabel.text = "話す速さ: %.2fx".format(progressToRate(rateSeek.progress))
+        }
+        updateRateLabel()
+        rateSeek.setOnSeekBarChangeListener(simpleSeekListener { updateRateLabel() })
+        container.addView(rateLabel)
+        container.addView(rateSeek)
+
+        val pitchLabel = TextView(this)
+        val pitchSeek = SeekBar(this).apply {
+            max = 100
+            progress = pitchToProgress(currentPitch)
+        }
+        fun updatePitchLabel() {
+            pitchLabel.text = "声の高さ: %.2fx".format(progressToPitch(pitchSeek.progress))
+        }
+        updatePitchLabel()
+        pitchSeek.setOnSeekBarChangeListener(simpleSeekListener { updatePitchLabel() })
+        container.addView(pitchLabel)
+        container.addView(pitchSeek)
+
+        val testButton = Button(this).apply {
+            text = "試聴"
+            setOnClickListener {
+                applyPreviewVoice(
+                    voices.getOrNull(voiceSpinner.selectedItemPosition),
+                    progressToRate(rateSeek.progress),
+                    progressToPitch(pitchSeek.progress)
+                )
+                speak("実況音声のテストです。プレイヤーA、外から決めた！2ポイント！")
+            }
+        }
+        container.addView(testButton)
+
+        AlertDialog.Builder(this)
+            .setTitle("実況音声設定")
+            .setView(container)
+            .setPositiveButton("保存") { _, _ ->
+                val selectedVoice = voices.getOrNull(voiceSpinner.selectedItemPosition)
+                val rate = progressToRate(rateSeek.progress)
+                val pitch = progressToPitch(pitchSeek.progress)
+
+                prefs.edit()
+                    .putString(PREF_VOICE_NAME, selectedVoice?.name)
+                    .putFloat(PREF_SPEECH_RATE, rate)
+                    .putFloat(PREF_PITCH, pitch)
+                    .apply()
+
+                applySavedTtsSettings()
+                statusText.text = "実況音声設定を保存しました"
+            }
+            .setNegativeButton("キャンセル") { _, _ ->
+                applySavedTtsSettings()
+            }
+            .setOnCancelListener {
+                applySavedTtsSettings()
+            }
+            .show()
+    }
+
+    private fun simpleSeekListener(onChanged: () -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChanged()
+        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+    }
+
+    private fun rateToProgress(rate: Float): Int =
+        (((rate.coerceIn(0.70f, 1.50f) - 0.70f) / 0.80f) * 100f).toInt()
+
+    private fun progressToRate(progress: Int): Float = 0.70f + (progress / 100f) * 0.80f
+
+    private fun pitchToProgress(pitch: Float): Int =
+        (((pitch.coerceIn(0.70f, 1.30f) - 0.70f) / 0.60f) * 100f).toInt()
+
+    private fun progressToPitch(progress: Int): Float = 0.70f + (progress / 100f) * 0.60f
+
+    private fun applyPreviewVoice(voice: Voice?, rate: Float, pitch: Float) {
+        tts?.language = Locale.JAPAN
+        if (voice != null) tts?.voice = voice
+        tts?.setSpeechRate(rate)
+        tts?.setPitch(pitch)
+    }
+
+    private fun applySavedTtsSettings() {
+        val engine = tts ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val voiceName = prefs.getString(PREF_VOICE_NAME, null)
+        val rate = prefs.getFloat(PREF_SPEECH_RATE, DEFAULT_SPEECH_RATE)
+        val pitch = prefs.getFloat(PREF_PITCH, DEFAULT_PITCH)
+
+        engine.language = Locale.JAPAN
+        val selectedVoice = engine.voices
+            ?.firstOrNull { it.name == voiceName && it.locale.language == Locale.JAPANESE.language }
+        if (selectedVoice != null) engine.voice = selectedVoice
+        engine.setSpeechRate(rate)
+        engine.setPitch(pitch)
     }
 
     private fun startCamera() {
@@ -204,8 +373,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.JAPAN
-            tts?.setSpeechRate(1.05f)
+            ttsReady = true
+            applySavedTtsSettings()
+        } else {
+            ttsReady = false
+            statusText.text = "音声エンジンを初期化できませんでした"
         }
     }
 
