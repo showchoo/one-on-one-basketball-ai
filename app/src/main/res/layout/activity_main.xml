@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <jp.showchoo.oneononeai.OverlayView
+        android:id="@+id/overlayView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="8dp"
+        android:background="#99000000">
+
+        <TextView
+            android:id="@+id/playerA"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="A  0"
+            android:textColor="#FFFFFF"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="リング位置を設定"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:paddingHorizontal="16dp" />
+
+        <TextView
+            android:id="@+id/playerB"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="0  B"
+            android:textColor="#FFFFFF"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#B3000000"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="8dp">
+
+            <Button
+                android:id="@+id/calibrateHoopButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="リング位置" />
+
+            <Button
+                android:id="@+id/calibrateThreeButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3Pライン" />
+
+            <Button
+                android:id="@+id/startButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="START" />
+
+            <Button
+                android:id="@+id/resetButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="RESET" />
+
+            <Button
+                android:id="@+id/a1Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="A +1" />
+
+            <Button
+                android:id="@+id/a2Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="A +2" />
+
+            <Button
+                android:id="@+id/b1Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="B +1" />
+
+            <Button
+                android:id="@+id/b2Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="B +2" />
+
+            <TextView
+                android:id="@+id/perfText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AI -- ms"
+                android:textColor="#FFFFFF"
+                android:padding="12dp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+</FrameLayout>
