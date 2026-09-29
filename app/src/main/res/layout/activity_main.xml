@@ -93,6 +93,12 @@
                 android:text="RESET" />
 
             <Button
+                android:id="@+id/commentaryButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="実況: ON" />
+
+            <Button
                 android:id="@+id/a1Button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
