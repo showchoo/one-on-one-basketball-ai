@@ -19,7 +19,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Fast basketball-only detector for a cropped region.
+ * Fast basketball-only detector for a cropped region.\n * v0.6.2 uses the MIT-licensed Stardust87 basketball-specific YOLOv5s weights.
  *
  * The 320x320 model sees only a small part of the camera image, so a ball that
  * is only a few pixels wide in the full frame becomes much larger in model
@@ -27,10 +27,10 @@ import kotlin.math.min
  */
 class BallRoiDetectorEngine(context: Context) : AutoCloseable {
     companion object {
-        private const val MODEL_FILE = "basketball_yolov8n_320.onnx"
+        private const val MODEL_FILE = "basketball_ball_yolov5s_320.onnx"
         private const val INPUT_SIZE = 320
         private const val BALL_CLASS = 0
-        private const val BALL_THRESHOLD = 0.06f
+        private const val BALL_THRESHOLD = 0.08f
         private const val NMS_IOU = 0.40f
     }
 
@@ -147,7 +147,7 @@ class BallRoiDetectorEngine(context: Context) : AutoCloseable {
             }
 
             val rows = output[0]
-            if (rows.size < 5) {
+            if (rows.isEmpty()) {
                 return Result(
                     emptyList(),
                     SystemClock.uptimeMillis() - start,
@@ -157,17 +157,22 @@ class BallRoiDetectorEngine(context: Context) : AutoCloseable {
                 )
             }
 
-            val anchors = rows[0].size
+            // Dedicated Stardust87 YOLOv5 export:
+            // [1, num_predictions, 5 + num_classes].
+            // Each prediction is cx, cy, w, h, objectness, class probability.
             val raw = ArrayList<Candidate>(48)
 
-            for (i in 0 until anchors) {
-                val score = rows[4 + BALL_CLASS][i]
+            for (row in rows) {
+                if (row.size < 6) continue
+                val objectness = row[4]
+                val classProbability = row[5]
+                val score = objectness * classProbability
                 if (score < BALL_THRESHOLD) continue
 
-                val cx = rows[0][i]
-                val cy = rows[1][i]
-                val w = rows[2][i]
-                val h = rows[3][i]
+                val cx = row[0]
+                val cy = row[1]
+                val w = row[2]
+                val h = row[3]
 
                 val cropLeft = (cx - w / 2f - padX) / scale
                 val cropTop = (cy - h / 2f - padY) / scale
@@ -198,7 +203,7 @@ class BallRoiDetectorEngine(context: Context) : AutoCloseable {
                     label = "sports ball",
                     score = it.score,
                     box = RectF(it.box),
-                    source = "BALL_ROI_YOLO"
+                    source = "BALL_DEDICATED_YOLOV5"
                 )
             }
 
