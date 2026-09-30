@@ -52,6 +52,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var cameraExecutor: ExecutorService
     @Volatile private var detector: ObjectDetectorEngine? = null
     private var lastInferenceAt = 0L
+    private var lastFullFrameInferenceAt = 0L
+    private var lastPlayerFallbackAt = 0L
+    private var analysisBitmap: Bitmap? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
@@ -490,32 +493,54 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .also { it.setSurfaceProvider(previewView.surfaceProvider) }
 
             val analysis = ImageAnalysis.Builder()
-                .setTargetResolution(Size(1280, 720))
+                .setTargetResolution(Size(960, 540))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
 
             analysis.setAnalyzer(cameraExecutor) { image ->
                 val now = SystemClock.uptimeMillis()
-                if (now - lastInferenceAt < 100L) {
+                val fastTracking = game.running && tracker.needsFastBallTracking
+                val minInferenceInterval = if (fastTracking) 85L else 140L
+                if (now - lastInferenceAt < minInferenceInterval) {
                     image.close()
                     return@setAnalyzer
                 }
                 lastInferenceAt = now
+
+                val fullFrameInterval = if (fastTracking) 220L else 360L
+                val runFullFrame =
+                    tracker.hoopRect == null || now - lastFullFrameInferenceAt >= fullFrameInterval
+                if (runFullFrame) lastFullFrameInferenceAt = now
+
+                val playerFallbackInterval = if (fastTracking) 350L else 700L
+                val runPlayerFallback =
+                    runFullFrame && now - lastPlayerFallbackAt >= playerFallbackInterval
+                if (runPlayerFallback) lastPlayerFallbackAt = now
                 val d = detector
                 if (d == null) {
                     image.close()
                     return@setAnalyzer
                 }
                 try {
-                    val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
+                    val bitmap = analysisBitmap
+                        ?.takeIf { it.width == image.width && it.height == image.height && !it.isRecycled }
+                        ?: Bitmap.createBitmap(
+                            image.width,
+                            image.height,
+                            Bitmap.Config.ARGB_8888
+                        ).also { analysisBitmap = it }
+
                     val buffer = image.planes[0].buffer
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
+
                     val result = d.detect(
-                        bitmap,
-                        image.imageInfo.rotationDegrees,
-                        tracker.hoopRect
+                        bitmap = bitmap,
+                        rotationDegrees = image.imageInfo.rotationDegrees,
+                        hoopRect = tracker.hoopRect,
+                        runFullFrame = runFullFrame,
+                        runPlayerFallback = runPlayerFallback
                     )
                     val snapshot = tracker.update(
                         result.detections,
@@ -541,7 +566,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         } else {
                             " | BALL --"
                         }
-                        perfText.text = "AI ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
+                        val aiMode = if (runFullFrame) "FULL" else "RIM"
+                        perfText.text =
+                            "ECO $aiMode ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
                         if (game.running) statusText.text = snapshot.status
                     }
                 } catch (e: Exception) {
@@ -581,6 +608,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
+        analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
+        analysisBitmap = null
         tts?.stop()
         tts?.shutdown()
     }
