@@ -3,6 +3,7 @@ package jp.showchoo.oneononeai
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.providers.NNAPIFlags
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -16,12 +17,13 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.ArrayDeque
+import java.util.EnumSet
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Three-frame basketball tracker based on the basketball TrackNetV2 weights
+ * Three-frame basketball tracker based on the lightweight WASB HRNet weights
  * published with NTT Communications' WASB-SBDT repository.
  *
  * Input: 3 RGB frames concatenated channel-first => [1, 9, 288, 512]
@@ -32,7 +34,7 @@ import kotlin.math.min
  */
 class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
     companion object {
-        private const val MODEL_FILE = "tracknetv2_basketball_3f.onnx"
+        private const val MODEL_FILE = "wasb_basketball_3f.onnx"
         private const val INPUT_W = 512
         private const val INPUT_H = 288
         private const val FRAMES = 3
@@ -49,7 +51,11 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         val detection: AiDetection?,
         val inferenceMs: Long,
         val maxHeat: Float,
+        val rawPeakProbability: Float,
+        val rawPeakX: Float,
+        val rawPeakY: Float,
         val blobPixels: Int,
+        val backend: String,
         val captureTimeMs: Long,
         val imageWidth: Int,
         val imageHeight: Int
@@ -63,13 +69,10 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
     )
 
     private val environment = OrtEnvironment.getEnvironment()
-    private val sessionOptions = OrtSession.SessionOptions().apply {
-        setIntraOpNumThreads(2)
-        setInterOpNumThreads(1)
-        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-    }
+    private val sessionOptions: OrtSession.SessionOptions
     private val session: OrtSession
     private val inputName: String
+    private val backendName: String
 
     private val frameBuffer = ArrayDeque<TemporalFrame>(FRAMES)
     private var lastOfferedAt = 0L
@@ -86,7 +89,32 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
 
     init {
         val modelBytes = context.assets.open(MODEL_FILE).use { it.readBytes() }
-        session = environment.createSession(modelBytes, sessionOptions)
+
+        var chosenOptions = OrtSession.SessionOptions().apply {
+            setIntraOpNumThreads(4)
+            setInterOpNumThreads(1)
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        }
+        var chosenBackend = "CPU"
+
+        val createdSession = try {
+            chosenOptions.addNnapi(EnumSet.of(NNAPIFlags.USE_FP16))
+            chosenBackend = "NNAPI_FP16"
+            environment.createSession(modelBytes, chosenOptions)
+        } catch (_: Exception) {
+            chosenOptions.close()
+            chosenOptions = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(4)
+                setInterOpNumThreads(1)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            }
+            chosenBackend = "CPU"
+            environment.createSession(modelBytes, chosenOptions)
+        }
+
+        sessionOptions = chosenOptions
+        session = createdSession
+        backendName = chosenBackend
         inputName = session.inputNames.first()
     }
 
@@ -155,6 +183,7 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         }
 
         val heatmap = output[0][OUTPUT_FRAME_INDEX]
+        val rawPeak = rawPeak(heatmap)
         val component = strongestComponent(heatmap)
         val latest = frames.last()
 
@@ -183,7 +212,11 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
             detection = detection,
             inferenceMs = SystemClock.uptimeMillis() - start,
             maxHeat = component?.maxProbability ?: 0f,
+            rawPeakProbability = rawPeak.probability,
+            rawPeakX = rawPeak.x / INPUT_W,
+            rawPeakY = rawPeak.y / INPUT_H,
             blobPixels = component?.pixels ?: 0,
+            backend = backendName,
             captureTimeMs = latest.captureTimeMs,
             imageWidth = latest.imageWidth,
             imageHeight = latest.imageHeight
@@ -197,6 +230,33 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         val maxProbability: Float,
         val weightSum: Float
     )
+
+    private data class RawPeak(
+        val x: Float,
+        val y: Float,
+        val probability: Float
+    )
+
+    private fun rawPeak(heatmap: Array<FloatArray>): RawPeak {
+        var maxLogit = Float.NEGATIVE_INFINITY
+        var bestX = 0
+        var bestY = 0
+        for (y in 0 until INPUT_H) {
+            val row = heatmap[y]
+            for (x in 0 until INPUT_W) {
+                if (row[x] > maxLogit) {
+                    maxLogit = row[x]
+                    bestX = x
+                    bestY = y
+                }
+            }
+        }
+        return RawPeak(
+            x = bestX.toFloat(),
+            y = bestY.toFloat(),
+            probability = sigmoid(maxLogit)
+        )
+    }
 
     private fun strongestComponent(heatmap: Array<FloatArray>): Blob? {
         var maxLogit = Float.NEGATIVE_INFINITY
