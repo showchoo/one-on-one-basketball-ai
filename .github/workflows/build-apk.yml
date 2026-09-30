@@ -29,12 +29,78 @@ jobs:
           base64 --decode ci/stable-debug.keystore.b64 > ci/stable-debug.keystore
           chmod 600 ci/stable-debug.keystore
 
+      - name: Export E-BARD basketball model to TFLite
+        env:
+          TF_CPP_MIN_LOG_LEVEL: '2'
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "ultralytics>=8.3,<9"
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import urlretrieve
+          import shutil
+          from ultralytics import YOLO
+
+          assets = Path("app/src/main/assets")
+          assets.mkdir(parents=True, exist_ok=True)
+          work = Path(".model-build")
+          work.mkdir(exist_ok=True)
+
+          pt = work / "BODD_yolov8n_0001.pt"
+          url = (
+              "https://huggingface.co/GabrieleGiudici/"
+              "E-BARD-detection-models/resolve/main/BODD_yolov8n_0001.pt"
+          )
+          if not pt.exists():
+              urlretrieve(url, pt)
+
+          model = YOLO(str(pt))
+          print("E-BARD class map:", model.names)
+
+          exported = model.export(
+              format="tflite",
+              imgsz=640,
+              nms=False,
+              half=False,
+              int8=False,
+              device="cpu",
+          )
+
+          exported_path = Path(str(exported))
+          candidates = []
+          if exported_path.is_file() and exported_path.suffix == ".tflite":
+              candidates.append(exported_path)
+          if exported_path.is_dir():
+              candidates.extend(exported_path.rglob("*.tflite"))
+          candidates.extend(work.rglob("*.tflite"))
+          candidates.extend(Path(".").glob("**/*float32.tflite"))
+
+          unique = []
+          seen = set()
+          for p in candidates:
+              rp = p.resolve()
+              if rp not in seen and p.exists():
+                  seen.add(rp)
+                  unique.append(p)
+
+          if not unique:
+              raise RuntimeError("TFLite export not found")
+
+          preferred = next(
+              (p for p in unique if "float32" in p.name.lower()),
+              unique[0]
+          )
+          dest = assets / "basketball_yolov8n.tflite"
+          shutil.copy2(preferred, dest)
+          print("Installed model:", dest, dest.stat().st_size, "bytes")
+          PY
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: one-on-one-ai-v0.2.1-apk
+          name: one-on-one-ai-v0.3.0-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
