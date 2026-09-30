@@ -47,7 +47,13 @@ class ObjectDetectorEngine(context: Context) {
         val bestBallSource: String
     )
 
-    fun detect(bitmap: Bitmap, rotationDegrees: Int, hoopRect: RectF? = null): Result {
+    fun detect(
+        bitmap: Bitmap,
+        rotationDegrees: Int,
+        hoopRect: RectF? = null,
+        runFullFrame: Boolean = true,
+        runPlayerFallback: Boolean = true
+    ): Result {
         val start = SystemClock.uptimeMillis()
 
         val turns = -rotationDegrees / 90
@@ -59,14 +65,18 @@ class ObjectDetectorEngine(context: Context) {
         val imageWidth = rotatedBitmap.width
         val imageHeight = rotatedBitmap.height
 
-        val full = runPass(
-            bitmap = rotatedBitmap,
-            offsetX = 0f,
-            offsetY = 0f,
-            source = "FULL",
-            includePeople = true,
-            ballThreshold = 0.10f
-        )
+        val full = if (runFullFrame) {
+            runPass(
+                bitmap = rotatedBitmap,
+                offsetX = 0f,
+                offsetY = 0f,
+                source = "FULL",
+                includePeople = true,
+                ballThreshold = 0.10f
+            )
+        } else {
+            PassResult(emptyList(), 0f, "NONE")
+        }
 
         val merged = full.detections.toMutableList()
         var bestBallScore = full.bestBallScore
@@ -114,7 +124,7 @@ class ObjectDetectorEngine(context: Context) {
 
         // Player crops are a fallback for dribbling / release frames.
         val fullBallFound = full.detections.any { it.label == "sports ball" }
-        if (!hoopBallFound && !fullBallFound) {
+        if (runFullFrame && runPlayerFallback && !hoopBallFound && !fullBallFound) {
             val people = full.detections
                 .filter { it.label == "person" }
                 .sortedByDescending { it.score }
