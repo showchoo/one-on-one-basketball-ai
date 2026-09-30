@@ -17,7 +17,8 @@ class BallTrackFusion(
 
     data class SearchAnchor(
         val box: RectF,
-        val speed: Float
+        val speed: Float,
+        val provisional: Boolean = false
     )
 
     // Legacy return type retained temporarily while v0.6 migrates search policy
@@ -342,11 +343,36 @@ class BallTrackFusion(
 
     @Synchronized
     fun searchAnchor(nowMs: Long): SearchAnchor? {
-        val box = predictBox(nowMs, allowExpired = false) ?: return null
-        val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
+        val confirmed = predictBox(nowMs, allowExpired = false)
+        if (confirmed != null) {
+            val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
+            return SearchAnchor(
+                box = RectF(confirmed),
+                speed = speed,
+                provisional = false
+            )
+        }
+
+        // Critical for slow phones: once a plausible raw ball is seen, spend the
+        // very next inference re-checking the same place instead of cycling
+        // through unrelated motion/player/tile ROIs. v0.6.5 logs showed repeated
+        // high-confidence detections returning ~1.0s later, while association
+        // only accepted matches within 700ms.
+        val provisional = pending
+            .filter {
+                val age = nowMs - it.lastTimeMs
+                age in 0L..1100L
+            }
+            .maxWithOrNull(
+                compareBy<Pending> { it.lastTimeMs }
+                    .thenBy { it.score }
+            )
+            ?: return null
+
         return SearchAnchor(
-            box = RectF(box),
-            speed = speed
+            box = RectF(provisional.box),
+            speed = 0f,
+            provisional = true
         )
     }
 
