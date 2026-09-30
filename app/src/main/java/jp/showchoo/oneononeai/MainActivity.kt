@@ -65,10 +65,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var controlsToggleButton: Button
     private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
-    private lateinit var streetMc: StreetMcPlayer
+    private lateinit var mcVoicePack: McVoicePack
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera() else statusText.text = "カメラ権限が必要です"
+    }
+
+    private val mcPackPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        val result = mcVoicePack.importZip(uri)
+        result.onSuccess { packName ->
+            statusText.text = "MC音声パック: $packName"
+            debugLogger.logEvent("MC_VOICE_PACK_IMPORTED", detail = "name=$packName")
+            mcVoicePack.previewAll()
+        }.onFailure { error ->
+            statusText.text = "MC音声パック読込失敗"
+            debugLogger.logEvent("MC_VOICE_PACK_ERROR", detail = error.toString())
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,7 +104,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
 
         debugLogger = DebugLogger(applicationContext)
-        streetMc = StreetMcPlayer(applicationContext)
+        mcVoicePack = McVoicePack(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -94,10 +113,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             targetScore = 10,
             onScoreChanged = { a, b -> updateScoreUi(a, b) },
             onGameStarted = { target ->
-                debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target; voice=street_mc")
+                debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target")
                 if (commentary.mode != CommentaryMode.OFF) {
                     tts?.stop()
-                    streetMc.playReadyTipoff()
+                    val mcPlayed = mcVoicePack.playSequence("are_you_ready", "tip_off")
+                    if (!mcPlayed) {
+                        commentary.onGameStart(target)?.let { speak(it) }
+                    }
                 }
             },
             onScoreEvent = { event ->
@@ -108,16 +130,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     points = event.points,
                     detail = "player=${event.player}; gameOver=${event.gameOver}"
                 )
-                if (!event.gameOver) {
-                    commentary.onScore(event)?.let { speak(it) }
+                if (commentary.mode != CommentaryMode.OFF) {
+                    if (event.gameOver) {
+                        tts?.stop()
+                        val mcPlayed = mcVoicePack.play("game_over")
+                        if (!mcPlayed) {
+                            commentary.onScore(event)?.let { speak(it) }
+                        }
+                    } else {
+                        commentary.onScore(event)?.let { speak(it) }
+                    }
                 }
             },
             onGameOver = { winner, a, b ->
-                debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner; voice=street_mc")
-                if (commentary.mode != CommentaryMode.OFF) {
-                    tts?.stop()
-                    streetMc.playVictory()
-                }
+                debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner")
                 statusText.text = "GAME: $winner WIN  $a-$b"
             }
         )
@@ -174,7 +200,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             commentaryButton.text = commentary.mode.buttonLabel
             if (commentary.mode == CommentaryMode.OFF) {
                 tts?.stop()
-                streetMc.stop()
+                mcVoicePack.stop()
             }
             debugLogger.logEvent("COMMENTARY_MODE", detail = commentary.mode.name)
             statusText.text = commentary.mode.buttonLabel
@@ -182,6 +208,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         findViewById<Button>(R.id.voiceSettingsButton).setOnClickListener {
             showVoiceSettings()
+        }
+
+        findViewById<Button>(R.id.mcVoicePackButton).setOnClickListener {
+            showMcVoicePackMenu()
         }
 
         findViewById<Button>(R.id.debugLogButton).setOnClickListener {
@@ -363,10 +393,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         container.addView(presetRow)
 
         val mcTestButton = Button(this).apply {
-            text = "STREET MC サンプルを試聴"
+            text = "MC音声パックを試聴"
             setOnClickListener {
                 tts?.stop()
-                streetMc.playDemo()
+                if (!mcVoicePack.previewAll()) {
+                    mcPackPicker.launch(arrayOf("application/zip", "application/octet-stream"))
+                }
             }
         }
         container.addView(mcTestButton)
@@ -411,6 +443,30 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .setOnCancelListener {
                 applySavedTtsSettings()
             }
+            .show()
+    }
+
+    private fun showMcVoicePackMenu() {
+        val hasPack = mcVoicePack.has("are_you_ready") ||
+            mcVoicePack.has("game_over") ||
+            mcVoicePack.has("tip_off")
+
+        if (!hasPack) {
+            mcPackPicker.launch(arrayOf("application/zip", "application/octet-stream"))
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("MC音声パック")
+            .setMessage(mcVoicePack.name)
+            .setPositiveButton("試聴") { _, _ ->
+                tts?.stop()
+                mcVoicePack.previewAll()
+            }
+            .setNeutralButton("変更") { _, _ ->
+                mcPackPicker.launch(arrayOf("application/zip", "application/octet-stream"))
+            }
+            .setNegativeButton("閉じる", null)
             .show()
     }
 
@@ -631,7 +687,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
-        streetMc.release()
+        mcVoicePack.release()
         analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
         analysisBitmap = null
         tts?.stop()
