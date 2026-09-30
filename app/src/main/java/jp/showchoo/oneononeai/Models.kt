@@ -6,7 +6,10 @@ data class AiDetection(
     val label: String,
     val score: Float,
     val box: RectF,
-    val source: String = "FULL"
+    val source: String = "FULL",
+    val appearanceR: Float = -1f,
+    val appearanceG: Float = -1f,
+    val appearanceB: Float = -1f
 )
 
 data class PlayerTrack(
