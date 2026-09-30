@@ -15,16 +15,18 @@ class BallTrackFusion(
         val ageSinceVerifiedMs: Long
     )
 
-    data class SearchRoi(
-        val rect: RectF,
-        val reason: String
+    data class SearchAnchor(
+        val box: RectF,
+        val speed: Float
     )
 
     private data class Pending(
-        val box: RectF,
-        val score: Float,
-        val timeMs: Long,
-        val source: String
+        var box: RectF,
+        var score: Float,
+        var firstTimeMs: Long,
+        var lastTimeMs: Long,
+        var hits: Int,
+        var source: String
     )
 
     private var confirmedBox: RectF? = null
@@ -117,20 +119,27 @@ class BallTrackFusion(
             // MOTION_1..4 are interleaved and the same real ball may not be
             // inspected on two consecutive ROI passes.
             pending.removeAll {
-                val age = captureTimeMs - it.timeMs
-                age < 0L || age > 900L
+                val age = captureTimeMs - it.lastTimeMs
+                age < 0L || age > 1100L
             }
 
             val match = pending
                 .mapNotNull { p ->
-                    val dtMs = captureTimeMs - p.timeMs
-                    if (dtMs !in 35L..900L) {
+                    val dtMs = captureTimeMs - p.lastTimeMs
+                    if (dtMs !in 35L..700L) {
                         null
                     } else {
-                        val dynamicGate =
-                            (0.055f + dtMs / 1000f * 0.42f).coerceAtMost(0.28f)
-                        val d = distance(p.box, chosen.box)
-                        if (d <= dynamicGate) Triple(p, dtMs, d) else null
+                        val sizeA = ((p.box.width() + p.box.height()) / 2f).coerceAtLeast(0.001f)
+                        val sizeB = ((chosen.box.width() + chosen.box.height()) / 2f).coerceAtLeast(0.001f)
+                        val sizeRatio = sizeB / sizeA
+                        if (sizeRatio !in 0.45f..2.20f) {
+                            null
+                        } else {
+                            val dynamicGate =
+                                (0.045f + dtMs / 1000f * 0.38f).coerceAtMost(0.22f)
+                            val d = distance(p.box, chosen.box)
+                            if (d <= dynamicGate) Triple(p, dtMs, d) else null
+                        }
                     }
                 }
                 .minByOrNull { it.third }
@@ -140,18 +149,47 @@ class BallTrackFusion(
                 val dt = match.second.coerceAtLeast(1L) / 1000f
                 vx = ((centerX(chosen.box) - centerX(p.box)) / dt).coerceIn(-3f, 3f)
                 vy = ((centerY(chosen.box) - centerY(p.box)) / dt).coerceIn(-3f, 3f)
-                acquire(chosen.box, chosen.score, captureTimeMs, receivedTimeMs, source)
-                pending.clear()
+
+                p.box = RectF(chosen.box)
+                p.score = p.score * 0.55f + chosen.score * 0.45f
+                p.lastTimeMs = captureTimeMs
+                p.hits += 1
+                p.source = source
+
+                if (p.hits >= 3 && p.lastTimeMs - p.firstTimeMs <= 1400L) {
+                    acquire(chosen.box, p.score, captureTimeMs, receivedTimeMs, source)
+                    pending.clear()
+                    onDebugEvent(
+                        "BALL_ACQUIRE_3_HIT score=" + p.score +
+                            " source=" + source +
+                            " ageMs=" + (p.lastTimeMs - p.firstTimeMs) +
+                            " d=" + match.third
+                    )
+                    return true
+                }
+
                 onDebugEvent(
-                    "BALL_ACQUIRE_TWO_HIT score=${chosen.score} source=$source dtMs=${match.second} d=${match.third}"
+                    "BALL_PENDING_MATCH hits=" + p.hits +
+                        " score=" + p.score +
+                        " source=" + source +
+                        " d=" + match.third
                 )
-                return true
+                return false
             }
 
-            pending += Pending(RectF(chosen.box), chosen.score, captureTimeMs, source)
-            while (pending.size > 6) pending.removeAt(0)
+            pending += Pending(
+                box = RectF(chosen.box),
+                score = chosen.score,
+                firstTimeMs = captureTimeMs,
+                lastTimeMs = captureTimeMs,
+                hits = 1,
+                source = source
+            )
+            while (pending.size > 8) pending.removeAt(0)
             onDebugEvent(
-                "BALL_PENDING score=${chosen.score} source=$source hypotheses=${pending.size}"
+                "BALL_PENDING_NEW score=" + chosen.score +
+                    " source=" + source +
+                    " hypotheses=" + pending.size
             )
             return false
         }
@@ -159,7 +197,19 @@ class BallTrackFusion(
         val predictedAtCapture = predictBox(captureTimeMs, allowExpired = true) ?: current
         val d = distance(predictedAtCapture, chosen.box)
 
-        val hardJump = d > 0.16f
+        val currentSize = ((current.width() + current.height()) / 2f).coerceAtLeast(0.001f)
+        val chosenSize = ((chosen.box.width() + chosen.box.height()) / 2f).coerceAtLeast(0.001f)
+        val sizeRatio = chosenSize / currentSize
+        if (sizeRatio !in 0.50f..1.90f && chosen.score < 0.50f) {
+            onDebugEvent(
+                "BALL_REJECT_SIZE ratio=" + sizeRatio +
+                    " score=" + chosen.score +
+                    " source=" + source
+            )
+            return false
+        }
+
+        val hardJump = d > 0.12f
         if (hardJump && chosen.score < 0.48f) {
             onDebugEvent("BALL_REJECT_JUMP d=$d score=${chosen.score} source=$source")
             return false
@@ -267,6 +317,16 @@ class BallTrackFusion(
         val choice = choices[searchIndex % choices.size]
         searchIndex = (searchIndex + 1) % 100000
         return SearchRoi(clamp(choice.rect), choice.reason)
+    }
+
+    @Synchronized
+    fun searchAnchor(nowMs: Long): SearchAnchor? {
+        val box = predictBox(nowMs, allowExpired = false) ?: return null
+        val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
+        return SearchAnchor(
+            box = RectF(box),
+            speed = speed
+        )
     }
 
     @Synchronized
