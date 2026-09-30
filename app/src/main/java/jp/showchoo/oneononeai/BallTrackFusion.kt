@@ -20,6 +20,13 @@ class BallTrackFusion(
         val speed: Float
     )
 
+    // Legacy return type retained temporarily while v0.6 migrates search policy
+    // out of BallTrackFusion into BallSearchPlanner.
+    data class SearchRoi(
+        val rect: RectF,
+        val reason: String
+    )
+
     private data class Pending(
         var box: RectF,
         var score: Float,
