@@ -182,7 +182,7 @@ class BallTrackFusion(
 
         if (age > TRACK_EXPIRE_MS) {
             confirmedBox = null
-            pending = null
+            pending.clear()
             onDebugEvent("BALL_TRACK_EXPIRED age=$age")
             return null
         }
@@ -335,7 +335,7 @@ class BallTrackFusion(
         lastUpdateMs = receivedTimeMs
         lastScore = score
         lastSource = source
-        pending = null
+        pending.clear()
 
         onDebugEvent(
             "BALL_VERIFY score=$score source=$source latency=" +
