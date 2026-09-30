@@ -33,7 +33,7 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
         private const val HOOP = 1
         private const val PLAYER = 2
 
-        private const val BALL_THRESHOLD = 0.05f
+        private const val BALL_THRESHOLD = 0.08f
         private const val HOOP_THRESHOLD = 0.30f
         private const val PLAYER_THRESHOLD = 0.25f
         private const val NMS_IOU = 0.45f
