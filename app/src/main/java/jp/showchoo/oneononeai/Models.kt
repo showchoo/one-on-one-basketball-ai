@@ -9,7 +9,8 @@ data class AiDetection(
     val source: String = "FULL",
     val appearanceR: Float = -1f,
     val appearanceG: Float = -1f,
-    val appearanceB: Float = -1f
+    val appearanceB: Float = -1f,
+    val appearanceHistogram: FloatArray? = null
 )
 
 data class PlayerTrack(
