@@ -640,40 +640,109 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun validateBallDetectionsForSearch(
         detections: List<AiDetection>,
         roi: RectF,
-        reason: String
+        reason: String,
+        players: PlayerIdentityTracker.Snapshot,
+        motionProposals: List<MotionBallProposer.Proposal>,
+        hoop: RectF?,
+        wasLocked: Boolean
     ): List<AiDetection> {
         if (detections.isEmpty()) return emptyList()
 
         val roiCx = (roi.left + roi.right) / 2f
         val roiCy = (roi.top + roi.bottom) / 2f
 
+        fun centerX(r: RectF) = (r.left + r.right) / 2f
+        fun centerY(r: RectF) = (r.top + r.bottom) / 2f
+
+        fun inExpandedPlayerZone(x: Float, y: Float, p: RectF): Boolean {
+            val left = p.left - p.width() * 0.80f
+            val right = p.right + p.width() * 0.80f
+            val top = p.top - p.height() * 0.28f
+            val bottom = p.bottom + p.height() * 0.28f
+            return x in left..right && y in top..bottom
+        }
+
+        fun inPlayerCore(x: Float, y: Float, p: RectF): Boolean {
+            val left = p.left + p.width() * 0.18f
+            val right = p.right - p.width() * 0.18f
+            val top = p.top + p.height() * 0.08f
+            val bottom = p.top + p.height() * 0.72f
+            return x in left..right && y in top..bottom
+        }
+
+        fun nearHoop(x: Float, y: Float): Boolean {
+            val h = hoop ?: return false
+            val dx = kotlin.math.abs(x - centerX(h))
+            val dy = kotlin.math.abs(y - centerY(h))
+            return dx <= maxOf(0.10f, h.width() * 3.2f) &&
+                dy <= maxOf(0.13f, h.height() * 4.2f)
+        }
+
         return detections.filter { detection ->
             val box = detection.box
             val w = box.width().coerceAtLeast(0.0001f)
             val h = box.height().coerceAtLeast(0.0001f)
+            val diameter = (w + h) / 2f
             val aspect = w / h
+            val cx = centerX(box)
+            val cy = centerY(box)
 
-            // A projected basketball should remain approximately round.
-            // Keep this relaxed enough for imperfect detector boxes.
-            val shapeOk = aspect in 0.50f..1.90f
-            if (!shapeOk) {
+            // Public basketball trackers commonly remove detections whose
+            // boxes are not approximately square before doing trajectory work.
+            val shapeOk = aspect in 0.62f..1.62f
+            val absoluteSizeOk = diameter in 0.004f..0.080f
+            if (!shapeOk || !absoluteSizeOk) {
                 false
-            } else if (reason.startsWith("MOTION")) {
-                // MotionBallProposer centers the ROI on the moving blob in the
-                // exact same capture frame. A basketball detection far from that
-                // center is almost certainly an unrelated YOLO false positive.
-                val cx = (box.left + box.right) / 2f
-                val cy = (box.top + box.bottom) / 2f
-                val dx = kotlin.math.abs(cx - roiCx)
-                val dy = kotlin.math.abs(cy - roiCy)
-                dx <= roi.width() * 0.30f &&
-                    dy <= roi.height() * 0.30f
             } else {
-                true
+                val playerBoxes = listOfNotNull(players.playerA, players.playerB)
+                val nearPlayers = playerBoxes.filter { inExpandedPlayerZone(cx, cy, it) }
+                val nearAnyPlayer = nearPlayers.isNotEmpty()
+                val deepInsidePlayer = playerBoxes.any { inPlayerCore(cx, cy, it) }
+                val closeToHoop = nearHoop(cx, cy)
+
+                val relativeSizeOk = if (nearPlayers.isNotEmpty()) {
+                    val nearest = nearPlayers.minByOrNull { p ->
+                        kotlin.math.hypot(
+                            (cx - centerX(p)).toDouble(),
+                            (cy - centerY(p)).toDouble()
+                        )
+                    }
+                    val playerHeight = nearest?.height()?.coerceAtLeast(0.02f) ?: 1f
+                    val ratio = diameter / playerHeight
+                    ratio in 0.025f..0.26f
+                } else {
+                    true
+                }
+
+                val motionAligned = if (reason.startsWith("MOTION")) {
+                    val dx = kotlin.math.abs(cx - roiCx)
+                    val dy = kotlin.math.abs(cy - roiCy)
+                    val roiAligned =
+                        dx <= roi.width() * 0.28f &&
+                            dy <= roi.height() * 0.28f
+                    val proposalAligned = motionProposals.any { proposal ->
+                        kotlin.math.hypot(
+                            (cx - proposal.centerX).toDouble(),
+                            (cy - proposal.centerY).toDouble()
+                        ) <= 0.085
+                    }
+                    roiAligned && proposalAligned
+                } else {
+                    true
+                }
+
+                // Acquisition is possession-first. Before there is a trusted
+                // track, a new ball must originate around A/B or around the rim.
+                // This blocks the background false positives that dominated v0.5.
+                val acquisitionContextOk =
+                    wasLocked || nearAnyPlayer || closeToHoop
+
+                val coreOk = wasLocked || !deepInsidePlayer || closeToHoop
+
+                relativeSizeOk && motionAligned && acquisitionContextOk && coreOk
             }
         }
     }
-
     private fun addManualScore(player: Char, points: Int) {
         debugLogger.logEvent(
             eventType = "MANUAL_SCORE_REQUEST",
