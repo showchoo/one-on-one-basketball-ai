@@ -15,6 +15,11 @@ class BallTrackFusion(
         val ageSinceVerifiedMs: Long
     )
 
+    data class SearchRoi(
+        val rect: RectF,
+        val reason: String
+    )
+
     private data class Pending(
         val box: RectF,
         val score: Float,
@@ -79,7 +84,11 @@ class BallTrackFusion(
                     it to d
                 }
                 .filter { pair ->
-                    val gate = if (source == "BALL_ROI_YOLO") 0.16f else 0.22f
+                    val gate = when (source) {
+                        "BALL_MOTION_ROI" -> 0.20f
+                        "BALL_ROI_YOLO" -> 0.18f
+                        else -> 0.22f
+                    }
                     pair.second <= gate
                 }
                 .minByOrNull { it.second - it.first.score * 0.08f }
@@ -88,22 +97,37 @@ class BallTrackFusion(
             candidates.firstOrNull()
         } ?: return false
 
-        val minScore = if (source == "BALL_ROI_YOLO") 0.09f else 0.13f
+        val minScore = when (source) {
+            "BALL_MOTION_ROI" -> 0.07f
+            "BALL_ROI_YOLO" -> 0.085f
+            else -> 0.13f
+        }
         if (chosen.score < minScore) return false
 
         if (current == null) {
             val p = pending
-            if (chosen.score >= 0.32f) {
+            val singleHitThreshold =
+                if (source == "BALL_MOTION_ROI") 0.18f else 0.30f
+            if (chosen.score >= singleHitThreshold) {
                 acquire(chosen.box, chosen.score, captureTimeMs, receivedTimeMs, source)
                 pending = null
                 return true
             }
 
+            val pendingDtMs =
+                if (p != null) captureTimeMs - p.timeMs else Long.MAX_VALUE
+            val dynamicGate =
+                if (pendingDtMs in 20L..650L) {
+                    (0.08f + pendingDtMs / 1000f * 0.95f).coerceAtMost(0.34f)
+                } else {
+                    0f
+                }
+
             if (p != null &&
-                captureTimeMs - p.timeMs in 20L..520L &&
-                distance(p.box, chosen.box) <= 0.12f
+                pendingDtMs in 20L..650L &&
+                distance(p.box, chosen.box) <= dynamicGate
             ) {
-                val dt = (captureTimeMs - p.timeMs).coerceAtLeast(1L) / 1000f
+                val dt = pendingDtMs.coerceAtLeast(1L) / 1000f
                 vx = ((centerX(chosen.box) - centerX(p.box)) / dt).coerceIn(-3f, 3f)
                 vy = ((centerY(chosen.box) - centerY(p.box)) / dt).coerceIn(-3f, 3f)
                 acquire(chosen.box, chosen.score, captureTimeMs, receivedTimeMs, source)
@@ -169,36 +193,55 @@ class BallTrackFusion(
     fun nextSearchRoi(
         players: PlayerIdentityTracker.Snapshot,
         hoop: RectF?,
-        nowMs: Long
-    ): RectF {
+        nowMs: Long,
+        motionProposals: List<MotionBallProposer.Proposal>
+    ): SearchRoi {
         val active = predictBox(nowMs, allowExpired = false)
         if (active != null) {
             val speed = hypot(vx.toDouble(), vy.toDouble()).toFloat()
-            val w = (0.22f + speed * 0.06f).coerceIn(0.22f, 0.38f)
-            val h = (0.28f + speed * 0.08f).coerceIn(0.28f, 0.46f)
-            return centeredRoi(centerX(active), centerY(active), w, h)
-        }
-
-        val choices = mutableListOf<RectF>()
-        players.playerA?.let { choices += expandPlayerRoi(it) }
-        players.playerB?.let { choices += expandPlayerRoi(it) }
-        hoop?.let {
-            choices += centeredRoi(
-                centerX(it),
-                centerY(it) - 0.06f,
-                0.34f,
-                0.46f
+            val w = (0.20f + speed * 0.055f).coerceIn(0.20f, 0.34f)
+            val h = (0.26f + speed * 0.07f).coerceIn(0.26f, 0.42f)
+            return SearchRoi(
+                centeredRoi(centerX(active), centerY(active), w, h),
+                "LOCKED"
             )
         }
 
-        choices += RectF(0.00f, 0.00f, 0.58f, 0.62f)
-        choices += RectF(0.42f, 0.00f, 1.00f, 0.62f)
-        choices += RectF(0.00f, 0.38f, 0.58f, 1.00f)
-        choices += RectF(0.42f, 0.38f, 1.00f, 1.00f)
+        val motion = motionProposals.firstOrNull()
+        if (motion != null) {
+            return SearchRoi(
+                motion.roi,
+                "MOTION"
+            )
+        }
 
-        val roi = choices[searchIndex % choices.size]
+        val choices = mutableListOf<SearchRoi>()
+        players.playerA?.let {
+            choices += SearchRoi(expandPlayerRoi(it), "PLAYER_A")
+        }
+        players.playerB?.let {
+            choices += SearchRoi(expandPlayerRoi(it), "PLAYER_B")
+        }
+        hoop?.let {
+            choices += SearchRoi(
+                centeredRoi(
+                    centerX(it),
+                    centerY(it) - 0.06f,
+                    0.32f,
+                    0.44f
+                ),
+                "HOOP"
+            )
+        }
+
+        choices += SearchRoi(RectF(0.00f, 0.00f, 0.54f, 0.58f), "TILE_LT")
+        choices += SearchRoi(RectF(0.46f, 0.00f, 1.00f, 0.58f), "TILE_RT")
+        choices += SearchRoi(RectF(0.00f, 0.42f, 0.54f, 1.00f), "TILE_LB")
+        choices += SearchRoi(RectF(0.46f, 0.42f, 1.00f, 1.00f), "TILE_RB")
+
+        val choice = choices[searchIndex % choices.size]
         searchIndex = (searchIndex + 1) % 100000
-        return clamp(roi)
+        return SearchRoi(clamp(choice.rect), choice.reason)
     }
 
     @Synchronized
