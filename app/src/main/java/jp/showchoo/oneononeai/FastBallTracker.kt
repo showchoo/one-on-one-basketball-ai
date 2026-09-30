@@ -196,10 +196,9 @@ class FastBallTracker {
                                 )
                                 if (candidate != null) {
                                     val appearanceScore = similarity(targetAppearance, candidate)
+                                    val sigma = max(10f, searchRadius * 0.58f)
                                     val motionScore = exp(
-                                        -(d * d) /
-                                            (2f * max(10f, searchRadius * 0.58f) *
-                                                max(10f, searchRadius * 0.58f))
+                                        (-(d * d) / (2f * sigma * sigma)).toDouble()
                                     )
                                     val score =
                                         appearanceScore * 0.78f + motionScore.toFloat() * 0.22f
@@ -345,7 +344,7 @@ class FastBallTracker {
         val luminance = abs(a.luminance - b.luminance)
         val saturation = abs(a.saturation - b.saturation)
         val distance = chroma * 2.8f + luminance * 0.55f + saturation * 0.45f
-        return exp(-distance * 2.1f).toFloat().coerceIn(0f, 1f)
+        return exp((-distance * 2.1f).toDouble()).toFloat().coerceIn(0f, 1f)
     }
 
     private fun blend(a: Appearance, b: Appearance, t: Float): Appearance =
