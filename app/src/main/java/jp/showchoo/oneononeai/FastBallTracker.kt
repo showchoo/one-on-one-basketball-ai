@@ -60,26 +60,10 @@ class FastBallTracker {
         normalizedBox: RectF,
         bitmap: Bitmap,
         rotationDegrees: Int,
-        nowMs: Long,
+        captureTimeMs: Long,
+        receivedTimeMs: Long,
         detectorConfidence: Float
     ) {
-        val old = boxNorm
-        if (old != null && lastUpdateMs > 0L) {
-            val dt = (nowMs - lastUpdateMs).coerceIn(1L, 1200L) / 1000f
-            val measuredVx = ((centerX(normalizedBox) - centerX(old)) / dt)
-                .coerceIn(-3.0f, 3.0f)
-            val measuredVy = ((centerY(normalizedBox) - centerY(old)) / dt)
-                .coerceIn(-3.0f, 3.0f)
-            val alpha = if (detectorConfidence >= 0.30f) 0.72f else 0.52f
-            vx = vx * (1f - alpha) + measuredVx * alpha
-            vy = vy * (1f - alpha) + measuredVy * alpha
-        }
-
-        boxNorm = RectF(normalizedBox)
-        lastUpdateMs = nowMs
-        lastYoloMs = nowMs
-        misses = 0
-
         val sampled = sampleAppearance(
             bitmap = bitmap,
             rotationDegrees = rotationDegrees,
@@ -93,6 +77,47 @@ class FastBallTracker {
                 blend(appearance!!, sampled, 0.22f)
             }
         }
+
+        val old = boxNorm
+        if (old == null || lastUpdateMs <= 0L) {
+            boxNorm = RectF(normalizedBox)
+            lastUpdateMs = receivedTimeMs
+            lastYoloMs = receivedTimeMs
+            misses = 0
+            return
+        }
+
+        val ageSec = (receivedTimeMs - captureTimeMs).coerceIn(0L, 700L) / 1000f
+        val projectedX = (
+            centerX(normalizedBox) + vx * ageSec
+        ).coerceIn(0.01f, 0.99f)
+        val projectedY = (
+            centerY(normalizedBox) + vy * ageSec + 0.5f * 0.70f * ageSec * ageSec
+        ).coerceIn(0.01f, 0.99f)
+
+        val currentX = centerX(old)
+        val currentY = centerY(old)
+        val correction = if (detectorConfidence >= 0.30f) 0.52f else 0.34f
+        val correctedX = currentX + (projectedX - currentX) * correction
+        val correctedY = currentY + (projectedY - currentY) * correction
+
+        val corrected = RectF(
+            (correctedX - normalizedBox.width() / 2f).coerceIn(0f, 1f),
+            (correctedY - normalizedBox.height() / 2f).coerceIn(0f, 1f),
+            (correctedX + normalizedBox.width() / 2f).coerceIn(0f, 1f),
+            (correctedY + normalizedBox.height() / 2f).coerceIn(0f, 1f)
+        )
+
+        val dt = (receivedTimeMs - lastUpdateMs).coerceIn(1L, 500L) / 1000f
+        val measuredVx = ((correctedX - currentX) / dt).coerceIn(-3f, 3f)
+        val measuredVy = ((correctedY - currentY) / dt).coerceIn(-3f, 3f)
+        vx = vx * 0.78f + measuredVx * 0.22f
+        vy = vy * 0.78f + measuredVy * 0.22f
+
+        boxNorm = corrected
+        lastUpdateMs = receivedTimeMs
+        lastYoloMs = receivedTimeMs
+        misses = 0
     }
 
     @Synchronized
