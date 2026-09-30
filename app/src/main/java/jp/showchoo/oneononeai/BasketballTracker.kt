@@ -359,6 +359,8 @@ class BasketballTracker(
         width: Int,
         height: Int
     ) {
+        if (hoopLockedByUser) return
+
         val detected = detections
             .filter { it.label == "hoop" }
             .maxByOrNull { it.score }
@@ -523,7 +525,11 @@ class BasketballTracker(
         wasBallNearPlayer = near
     }
 
-    private fun updateShotState(ball: RectF?, nowMs: Long): String {
+    private fun updateShotState(
+        ball: RectF?,
+        nowMs: Long,
+        ballPredicted: Boolean
+    ): String {
         if (nowMs < cooldownUntilMs) {
             return "COOLDOWN"
         }
@@ -532,8 +538,8 @@ class BasketballTracker(
 
         when (shotState) {
             ShotState.IDLE -> {
-                if (ball == null) {
-                    return if (playerA != null && playerB != null) "A/B追跡中" else "2人を認識中"
+                if (ball == null || ballPredicted) {
+                    return if (playerA != null && playerB != null) "A/B LOCK" else "2人を認識中"
                 }
 
                 if (isBallAboveHoopAndRising(ball, hoop)) {
@@ -562,24 +568,27 @@ class BasketballTracker(
                         "SHOT_ABOVE_RIM player=$shotPlayer value=$shotValue ball=" +
                             centerX(ball) + "|" + centerY(ball)
                     )
-                    return "SHOT / ABOVE RIM"
+                    return if (ballPredicted) "SHOT / PREDICT" else "SHOT / ABOVE RIM"
                 }
 
-                return if (playerA != null && playerB != null) "A/B追跡中" else "2人を認識中"
+                return if (playerA != null && playerB != null) "A/B LOCK" else "2人を認識中"
             }
 
             ShotState.ABOVE_RIM -> {
-                if (nowMs - shotStartedMs > 3000L) {
+                if (nowMs - shotStartedMs > 3400L) {
                     resetShot("SHOT_TIMEOUT_ABOVE")
                     return "SHOT TIMEOUT"
                 }
 
                 val saved = savedHoop ?: hoop
-                if (ball != null && centerY(ball) > centerY(saved)) {
+                if (ball != null &&
+                    centerY(ball) > centerY(saved) + saved.height() * 0.08f
+                ) {
                     shotState = ShotState.BELOW_RIM
                     ballBelowMs = nowMs
                     onDebugEvent(
-                        "SHOT_BELOW_RIM ball=" + centerX(ball) + "|" + centerY(ball)
+                        "SHOT_BELOW_RIM predicted=" + ballPredicted +
+                            " ball=" + centerX(ball) + "|" + centerY(ball)
                     )
                     return "SHOT / BELOW RIM"
                 }
@@ -598,7 +607,7 @@ class BasketballTracker(
             }
 
             ShotState.BELOW_RIM -> {
-                if (nowMs - ballBelowMs < 350L) {
+                if (nowMs - ballBelowMs < 260L) {
                     return "SHOT / VERIFYING"
                 }
 
@@ -616,6 +625,10 @@ class BasketballTracker(
                     resetShot("SHOT_MAKE")
                     cooldownUntilMs = nowMs + 1200L
                     return "MAKE"
+                }
+
+                if (ballPredicted && nowMs - ballBelowMs < 850L) {
+                    return "SHOT / VERIFYING"
                 }
 
                 resetShot("SHOT_MISS")
@@ -638,16 +651,15 @@ class BasketballTracker(
 
         if (!inX || !inY) return false
 
-        val recent = ballHistory.takeLast(4)
-        if (recent.size < 3) return false
+        val recent = ballHistory.filter { !it.predicted }.takeLast(4)
+        if (recent.size < 2) return false
 
-        var upwardSteps = 0
-        for (i in 1 until recent.size) {
-            if (recent[i].y < recent[i - 1].y) upwardSteps++
-        }
+        val netUp = recent.last().y < recent.first().y - 0.004f
+        val recentRelease =
+            releaseCandidatePlayer != null &&
+                recent.last().timeMs - releaseCandidateAtMs <= 2800L
 
-        val netUp = recent.last().y < recent.first().y - 0.005f
-        return upwardSteps >= 1 && netUp
+        return netUp || (recentRelease && recent.last().y <= hy)
     }
 
     private fun classifyMake(nowMs: Long): Boolean {
