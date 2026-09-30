@@ -5,7 +5,8 @@ import android.graphics.RectF
 data class AiDetection(
     val label: String,
     val score: Float,
-    val box: RectF
+    val box: RectF,
+    val source: String = "FULL"
 )
 
 data class PlayerTrack(
