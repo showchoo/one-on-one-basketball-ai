@@ -131,7 +131,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
         yoloExecutor = Executors.newSingleThreadExecutor()
-        fastBallTracker = FastBallTracker()
+        fastBallTracker = FastBallTracker { event ->
+            debugLogger.logEvent(
+                eventType = "FAST_BALL_EVENT",
+                scoreA = if (::game.isInitialized) game.scoreA else null,
+                scoreB = if (::game.isInitialized) game.scoreB else null,
+                detail = event
+            )
+        }
         playerIdentityTracker = PlayerIdentityTracker { event ->
             debugLogger.logEvent(
                 eventType = "PLAYER_TRACKER_EVENT",
@@ -667,13 +674,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             detections = packet.result.detections,
                             imageWidth = packet.result.imageWidth,
                             imageHeight = packet.result.imageHeight,
-                            nowMs = packet.receivedTimeMs
+                            nowMs = packet.captureTimeMs
                         )
                         tracker.updateYoloDetections(
                             detections = packet.result.detections,
                             imageWidth = packet.result.imageWidth,
                             imageHeight = packet.result.imageHeight,
-                            nowMs = packet.receivedTimeMs
+                            nowMs = packet.captureTimeMs
                         )
                     }
 
@@ -789,6 +796,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                             .coerceIn(0f, 1f),
                                         (ballDetection.box.bottom / result.imageHeight)
                                             .coerceIn(0f, 1f)
+                                    )
+
+                                    debugLogger.logEvent(
+                                        "YOLO_BALL_ANCHOR",
+                                        detail =
+                                            "conf=" + ballDetection.score +
+                                                "; latencyMs=" + (receivedTime - captureTime) +
+                                                "; x=" + ((norm.left + norm.right) / 2f) +
+                                                "; y=" + ((norm.top + norm.bottom) / 2f)
                                     )
 
                                     fastBallTracker.anchor(
