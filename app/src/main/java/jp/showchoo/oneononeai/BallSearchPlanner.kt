@@ -39,6 +39,21 @@ class BallSearchPlanner {
         searchCount = (searchCount + 1) % 100000
 
         if (active != null) {
+            if (active.provisional) {
+                // Re-check a fresh unconfirmed hit immediately. A slightly
+                // larger crop tolerates ball motion during the ~200-300ms
+                // inference delay on entry-level phones.
+                return SearchRoi(
+                    centeredRoi(
+                        centerX(active.box),
+                        centerY(active.box),
+                        0.18f,
+                        0.24f
+                    ),
+                    "VERIFY_PENDING"
+                )
+            }
+
             val w = (0.13f + active.speed * 0.040f).coerceIn(0.13f, 0.25f)
             val h = (0.18f + active.speed * 0.055f).coerceIn(0.18f, 0.31f)
             return SearchRoi(
