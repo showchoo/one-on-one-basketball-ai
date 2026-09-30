@@ -29,27 +29,12 @@ jobs:
           base64 --decode ci/stable-debug.keystore.b64 > ci/stable-debug.keystore
           chmod 600 ci/stable-debug.keystore
 
-      - name: Install bundled MC voice pack
-        run: |
-          mkdir -p app/src/main/assets
-          python3 - <<'PY'
-          import base64
-          from pathlib import Path
-
-          src = Path("ci/mc_voice_pack.zip.b64").read_text(encoding="utf-8")
-          compact = "".join(src.split())
-          compact += "=" * (-len(compact) % 4)
-          data = base64.b64decode(compact, validate=False)
-          Path("app/src/main/assets/mc_voice_pack.zip").write_bytes(data)
-          print(f"MC voice pack: {len(data)} bytes")
-          PY
-
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: one-on-one-ai-debug-apk
+          name: one-on-one-ai-v0.2.1-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
