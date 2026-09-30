@@ -10,7 +10,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.os.SystemClock
 import java.nio.ByteBuffer
@@ -65,7 +64,17 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         val chw: FloatArray,
         val captureTimeMs: Long,
         val imageWidth: Int,
-        val imageHeight: Int
+        val imageHeight: Int,
+        val modelScale: Float,
+        val modelOffsetX: Float,
+        val modelOffsetY: Float
+    )
+
+    private data class PreprocessedFrame(
+        val chw: FloatArray,
+        val scale: Float,
+        val offsetX: Float,
+        val offsetY: Float
     )
 
     private val environment = OrtEnvironment.getEnvironment()
@@ -135,13 +144,16 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
 
         val rotated = rotate(bitmap, rotationDegrees)
         try {
-            val chw = preprocess(rotated)
+            val preprocessed = preprocess(rotated)
             frameBuffer.addLast(
                 TemporalFrame(
-                    chw = chw,
+                    chw = preprocessed.chw,
                     captureTimeMs = captureTimeMs,
                     imageWidth = rotated.width,
-                    imageHeight = rotated.height
+                    imageHeight = rotated.height,
+                    modelScale = preprocessed.scale,
+                    modelOffsetX = preprocessed.offsetX,
+                    modelOffsetY = preprocessed.offsetY
                 )
             )
             while (frameBuffer.size > FRAMES) frameBuffer.removeFirst()
@@ -187,13 +199,29 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         val component = strongestComponent(heatmap)
         val latest = frames.last()
 
+        fun modelToNormalized(modelX: Float, modelY: Float): Pair<Float, Float> {
+            val sourceX =
+                (modelX - latest.modelOffsetX) / latest.modelScale
+            val sourceY =
+                (modelY - latest.modelOffsetY) / latest.modelScale
+            return Pair(
+                (sourceX / latest.imageWidth).coerceIn(0f, 1f),
+                (sourceY / latest.imageHeight).coerceIn(0f, 1f)
+            )
+        }
+
+        val rawPeakNorm = modelToNormalized(rawPeak.x, rawPeak.y)
+
         val detection = component?.let { blob ->
-            // TrackNet heatmaps encode center likelihood rather than object
-            // extent, so use a fixed view-consistent marker around the center.
-            val cx = (blob.cx / INPUT_W).coerceIn(0f, 1f)
-            val cy = (blob.cy / INPUT_H).coerceIn(0f, 1f)
-            val halfW = 8f / INPUT_W
-            val halfH = 8f / INPUT_H
+            val center = modelToNormalized(blob.cx, blob.cy)
+            val cx = center.first
+            val cy = center.second
+
+            // Approximate an 8 model-pixel radius in original-frame
+            // normalized coordinates after undoing the official affine scale.
+            val halfSourcePx = 8f / latest.modelScale
+            val halfW = halfSourcePx / latest.imageWidth
+            val halfH = halfSourcePx / latest.imageHeight
 
             AiDetection(
                 label = "sports ball",
@@ -204,7 +232,7 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
                     (cx + halfW).coerceIn(0f, 1f),
                     (cy + halfH).coerceIn(0f, 1f)
                 ),
-                source = "TRACKNET_V2"
+                source = "WASB_HRNET"
             )
         }
 
@@ -213,8 +241,8 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
             inferenceMs = SystemClock.uptimeMillis() - start,
             maxHeat = component?.maxProbability ?: 0f,
             rawPeakProbability = rawPeak.probability,
-            rawPeakX = rawPeak.x / INPUT_W,
-            rawPeakY = rawPeak.y / INPUT_H,
+            rawPeakX = rawPeakNorm.first,
+            rawPeakY = rawPeakNorm.second,
             blobPixels = component?.pixels ?: 0,
             backend = backendName,
             captureTimeMs = latest.captureTimeMs,
@@ -332,12 +360,30 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         return best
     }
 
-    private fun preprocess(bitmap: Bitmap): FloatArray {
+    private fun preprocess(bitmap: Bitmap): PreprocessedFrame {
+        // Match WASB-SBDT's official get_transform(): use
+        // s=max(width,height), map that square with scale INPUT_W/s, center it
+        // at (INPUT_W/2, INPUT_H/2), and let the 512x288 output canvas crop
+        // the excess. This is NOT a direct 4:3 -> 16:9 stretch.
+        val sourceW = bitmap.width.toFloat()
+        val sourceH = bitmap.height.toFloat()
+        val sourceScaleBasis = max(sourceW, sourceH)
+        val scale = INPUT_W.toFloat() / sourceScaleBasis
+        val scaledW = sourceW * scale
+        val scaledH = sourceH * scale
+        val offsetX = (INPUT_W - scaledW) / 2f
+        val offsetY = (INPUT_H - scaledH) / 2f
+
         canvas.drawColor(Color.BLACK)
         canvas.drawBitmap(
             bitmap,
-            Rect(0, 0, bitmap.width, bitmap.height),
-            Rect(0, 0, INPUT_W, INPUT_H),
+            null,
+            RectF(
+                offsetX,
+                offsetY,
+                offsetX + scaledW,
+                offsetY + scaledH
+            ),
             paint
         )
         modelBitmap.getPixels(pixels, 0, INPUT_W, 0, 0, INPUT_W, INPUT_H)
@@ -353,7 +399,13 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
             out[planeSize + i] = (g - MEAN[1]) / STD[1]
             out[2 * planeSize + i] = (b - MEAN[2]) / STD[2]
         }
-        return out
+
+        return PreprocessedFrame(
+            chw = out,
+            scale = scale,
+            offsetX = offsetX,
+            offsetY = offsetY
+        )
     }
 
     private fun sigmoid(v: Float): Float =
