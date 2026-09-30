@@ -84,7 +84,7 @@ jobs:
 
       - name: Export TrackNetV2 basketball temporal model to ONNX
         run: |
-          python3 -m pip install gdown onnx
+          python3 -m pip install gdown onnx onnxscript
           git clone --filter=blob:none --no-checkout https://github.com/nttcom/WASB-SBDT.git .model-build/wasb-sbdt
           git -C .model-build/wasb-sbdt fetch --depth 1 origin 923462cacdeb3353b84ddebdedb3f4b7a8553b0f
           git -C .model-build/wasb-sbdt checkout FETCH_HEAD
@@ -139,6 +139,7 @@ jobs:
               output_names=["heatmaps"],
               opset_version=12,
               do_constant_folding=True,
+              dynamo=False,
           )
           m = onnx.load(out)
           onnx.checker.check_model(m)
