@@ -55,24 +55,28 @@ jobs:
           model = YOLO(str(pt))
           print("E-BARD class map:", model.names)
 
-          exported = model.export(
-              format="onnx",
-              imgsz=640,
-              opset=12,
-              simplify=False,
-              dynamic=False,
-              device="cpu",
-          )
-          exported_path = Path(str(exported))
-          if not exported_path.exists():
-              candidates = list(work.rglob("*.onnx")) + list(Path(".").glob("**/*.onnx"))
-              if not candidates:
-                  raise RuntimeError("ONNX export not found")
-              exported_path = candidates[0]
+          def export_and_copy(imgsz, dest_name):
+              exported = model.export(
+                  format="onnx",
+                  imgsz=imgsz,
+                  opset=12,
+                  simplify=False,
+                  dynamic=False,
+                  device="cpu",
+              )
+              exported_path = Path(str(exported))
+              if not exported_path.exists():
+                  candidates = list(work.rglob("*.onnx")) + list(Path(".").glob("**/*.onnx"))
+                  if not candidates:
+                      raise RuntimeError("ONNX export not found")
+                  exported_path = max(candidates, key=lambda p: p.stat().st_mtime)
 
-          dest = assets / "basketball_yolov8n.onnx"
-          shutil.copy2(exported_path, dest)
-          print("Installed model:", dest, dest.stat().st_size, "bytes")
+              dest = assets / dest_name
+              shutil.copy2(exported_path, dest)
+              print("Installed model:", dest, dest.stat().st_size, "bytes")
+
+          export_and_copy(640, "basketball_yolov8n.onnx")
+          export_and_copy(320, "basketball_yolov8n_320.onnx")
           PY
 
       - name: Build debug APK
@@ -81,6 +85,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: one-on-one-ai-v0.4.1-apk
+          name: one-on-one-ai-v0.5.0-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
