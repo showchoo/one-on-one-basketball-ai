@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var analysisBitmap: Bitmap? = null
 
     private lateinit var ballFusion: BallTrackFusion
+    private lateinit var ballContextTracker: BallContextTracker
     private lateinit var ballSearchPlanner: BallSearchPlanner
     private lateinit var motionBallProposer: MotionBallProposer
     private lateinit var playerIdentityTracker: PlayerIdentityTracker
@@ -158,6 +159,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         ballFusion = BallTrackFusion { event ->
             debugLogger.logEvent(
                 eventType = "BALL_FUSION_EVENT",
+                scoreA = if (::game.isInitialized) game.scoreA else null,
+                scoreB = if (::game.isInitialized) game.scoreB else null,
+                detail = event
+            )
+        }
+        ballContextTracker = BallContextTracker { event ->
+            debugLogger.logEvent(
+                eventType = "BALL_CONTEXT_EVENT",
                 scoreA = if (::game.isInitialized) game.scoreA else null,
                 scoreB = if (::game.isInitialized) game.scoreB else null,
                 detail = event
@@ -329,6 +338,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.startButton).setOnClickListener {
             tracker.resetSession()
             ballFusion.reset()
+            ballContextTracker.reset()
             ballSearchPlanner.reset()
             motionBallProposer.reset()
             playerIdentityTracker.reset()
@@ -349,6 +359,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             game.reset()
             tracker.resetSession()
             ballFusion.reset()
+            ballContextTracker.reset()
             ballSearchPlanner.reset()
             motionBallProposer.reset()
             playerIdentityTracker.reset()
@@ -875,7 +886,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                         val rawDetections = packet.result.detections
-                        val validatedDetections = validateBallDetectionsForSearch(
+                        val geometryValidated = validateBallDetectionsForSearch(
                             detections = rawDetections,
                             roi = packet.result.roi,
                             reason = packet.reason,
@@ -884,6 +895,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             hoop = packet.hoopAtCapture,
                             wasLocked = packet.wasLockedAtCapture
                         )
+                        val validatedDetections = geometryValidated.filter {
+                            ballContextTracker.candidateAllowed(
+                                box = it.box,
+                                players = packet.playersAtCapture,
+                                hoop = packet.hoopAtCapture,
+                                nowMs = packet.receivedTimeMs,
+                                alreadyLocked = packet.wasLockedAtCapture
+                            )
+                        }
 
                         val accepted = ballFusion.observe(
                             detections = validatedDetections,
@@ -912,7 +932,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             detail =
                                 "accepted=" + accepted +
                                     "; rawCandidates=" + rawDetections.size +
+                                    "; geometryCandidates=" + geometryValidated.size +
                                     "; candidates=" + validatedDetections.size +
+                                    "; context=" + ballContextTracker.currentMode() +
                                     "; inferenceMs=" + packet.result.inferenceMs +
                                     "; reason=" + packet.reason +
                                     "; motionCount=" + packet.motionCount +
@@ -926,6 +948,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     val players = playerIdentityTracker.snapshot(frameTime)
                     val fusedBall = ballFusion.predict(frameTime)
+                    ballContextTracker.update(
+                        players = players,
+                        ball = fusedBall,
+                        hoop = tracker.hoopRect,
+                        nowMs = frameTime
+                    )
                     val snapshot = tracker.updateFrame(
                         players = players,
                         ball = fusedBall,
@@ -984,9 +1012,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.6.0 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.6.1 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
+                                    "CTX ${ballContextTracker.currentMode()} | " +
                                     ballText
 
                             if (game.running) {
