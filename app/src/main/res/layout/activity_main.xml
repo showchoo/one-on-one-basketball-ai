@@ -198,130 +198,113 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="COURT / VOICE"
+                android:textColor="@color/hud_text_secondary"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.12" />
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1.45"
-                android:orientation="vertical">
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:gravity="start|center_vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="COURT SETUP"
-                    android:textColor="@color/hud_text_secondary"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.12" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/calibrateHoopButton"
+                    style="@style/Widget.OneOnOneAI.Button.Secondary"
+                    android:layout_width="102dp"
+                    android:layout_height="42dp"
+                    android:text="◎ リング" />
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/calibrateThreeButton"
+                    style="@style/Widget.OneOnOneAI.Button.Secondary"
+                    android:layout_width="104dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="5dp"
+                    android:text="⌒ 3Pライン" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/calibrateHoopButton"
-                        style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="108dp"
-                        android:layout_height="42dp"
-                        android:text="◎ リング" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/voiceSettingsButton"
+                    style="@style/Widget.OneOnOneAI.Button.Secondary"
+                    android:layout_width="88dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="5dp"
+                    android:text="TTS" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/calibrateThreeButton"
-                        style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="108dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:text="⌒ 3Pライン" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/voiceSettingsButton"
-                        style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="94dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:text="音声" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/mcVoicePackButton"
-                        style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="104dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:text="MC音声" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/debugLogButton"
-                        style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="104dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="6dp"
-                        android:text="ログ共有" />
-                </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/mcVoicePackButton"
+                    style="@style/Widget.OneOnOneAI.Button.Secondary"
+                    android:layout_width="104dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="5dp"
+                    android:text="MC試聴" />
             </LinearLayout>
 
-            <View
-                android:layout_width="1dp"
-                android:layout_height="50dp"
-                android:layout_marginHorizontal="10dp"
-                android:background="#44FFFFFF" />
-
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="end">
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal"
+                android:gravity="start|center_vertical">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugLogButton"
+                    style="@style/Widget.OneOnOneAI.Button.Secondary"
+                    android:layout_width="118dp"
+                    android:layout_height="42dp"
+                    android:text="ログ共有"
+                    android:textColor="@color/basketball_orange"
+                    app:strokeColor="@color/basketball_orange" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="MANUAL SCORE"
+                    android:layout_marginStart="12dp"
+                    android:text="MANUAL"
                     android:textColor="@color/hud_text_secondary"
                     android:textSize="10sp"
                     android:textStyle="bold"
-                    android:letterSpacing="0.12" />
+                    android:letterSpacing="0.10" />
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="horizontal">
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/a1Button"
+                    style="@style/Widget.OneOnOneAI.Button.ScoreA"
+                    android:layout_width="68dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="8dp"
+                    android:text="A +1" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/a1Button"
-                        style="@style/Widget.OneOnOneAI.Button.ScoreA"
-                        android:layout_width="74dp"
-                        android:layout_height="42dp"
-                        android:text="A +1" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/a2Button"
+                    style="@style/Widget.OneOnOneAI.Button.ScoreA"
+                    android:layout_width="68dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="4dp"
+                    android:text="A +2" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/a2Button"
-                        style="@style/Widget.OneOnOneAI.Button.ScoreA"
-                        android:layout_width="74dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="5dp"
-                        android:text="A +2" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/b1Button"
+                    style="@style/Widget.OneOnOneAI.Button.ScoreB"
+                    android:layout_width="68dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="8dp"
+                    android:text="B +1" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/b1Button"
-                        style="@style/Widget.OneOnOneAI.Button.ScoreB"
-                        android:layout_width="74dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="10dp"
-                        android:text="B +1" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/b2Button"
-                        style="@style/Widget.OneOnOneAI.Button.ScoreB"
-                        android:layout_width="74dp"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="5dp"
-                        android:text="B +2" />
-                </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/b2Button"
+                    style="@style/Widget.OneOnOneAI.Button.ScoreB"
+                    android:layout_width="68dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="4dp"
+                    android:text="B +2" />
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>
