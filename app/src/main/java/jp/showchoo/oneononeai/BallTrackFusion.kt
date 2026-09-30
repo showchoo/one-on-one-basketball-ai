@@ -34,7 +34,7 @@ class BallTrackFusion(
     private var lastUpdateMs = 0L
     private var lastScore = 0f
     private var lastSource = ""
-    private var pending: Pending? = null
+    private val pending = mutableListOf<Pending>()
     private var searchIndex = 0
     private var motionSearchIndex = 0
     private var unlockedSearchCount = 0
@@ -53,7 +53,7 @@ class BallTrackFusion(
         lastUpdateMs = 0L
         lastScore = 0f
         lastSource = ""
-        pending = null
+        pending.clear()
         searchIndex = 0
         motionSearchIndex = 0
         unlockedSearchCount = 0
@@ -88,10 +88,13 @@ class BallTrackFusion(
                     it to d
                 }
                 .filter { pair ->
+                    // Once locked, prediction already compensates for velocity.
+                    // Keep the residual gate deliberately tight so a false
+                    // basketball-looking object inside a large ROI cannot take over.
                     val gate = when (source) {
-                        "BALL_MOTION_ROI" -> 0.20f
-                        "BALL_ROI_YOLO" -> 0.18f
-                        else -> 0.22f
+                        "BALL_MOTION_ROI" -> 0.12f
+                        "BALL_ROI_YOLO" -> 0.10f
+                        else -> 0.14f
                     }
                     pair.second <= gate
                 }
@@ -102,53 +105,61 @@ class BallTrackFusion(
         } ?: return false
 
         val minScore = when (source) {
-            "BALL_MOTION_ROI" -> 0.07f
-            "BALL_ROI_YOLO" -> 0.085f
-            else -> 0.13f
+            "BALL_MOTION_ROI" -> 0.10f
+            "BALL_ROI_YOLO" -> 0.11f
+            else -> 0.20f
         }
         if (chosen.score < minScore) return false
 
         if (current == null) {
-            val p = pending
-            val singleHitThreshold =
-                if (source == "BALL_MOTION_ROI") 0.18f else 0.30f
-            if (chosen.score >= singleHitThreshold) {
-                acquire(chosen.box, chosen.score, captureTimeMs, receivedTimeMs, source)
-                pending = null
-                return true
+            // v0.5.2 could lock from a single false positive. Never acquire from
+            // one observation now. Keep several short-lived hypotheses because
+            // MOTION_1..4 are interleaved and the same real ball may not be
+            // inspected on two consecutive ROI passes.
+            pending.removeAll {
+                val age = captureTimeMs - it.timeMs
+                age < 0L || age > 900L
             }
 
-            val pendingDtMs =
-                if (p != null) captureTimeMs - p.timeMs else Long.MAX_VALUE
-            val dynamicGate =
-                if (pendingDtMs in 20L..650L) {
-                    (0.08f + pendingDtMs / 1000f * 0.95f).coerceAtMost(0.34f)
-                } else {
-                    0f
+            val match = pending
+                .mapNotNull { p ->
+                    val dtMs = captureTimeMs - p.timeMs
+                    if (dtMs !in 35L..900L) {
+                        null
+                    } else {
+                        val dynamicGate =
+                            (0.055f + dtMs / 1000f * 0.42f).coerceAtMost(0.28f)
+                        val d = distance(p.box, chosen.box)
+                        if (d <= dynamicGate) Triple(p, dtMs, d) else null
+                    }
                 }
+                .minByOrNull { it.third }
 
-            if (p != null &&
-                pendingDtMs in 20L..650L &&
-                distance(p.box, chosen.box) <= dynamicGate
-            ) {
-                val dt = pendingDtMs.coerceAtLeast(1L) / 1000f
+            if (match != null) {
+                val p = match.first
+                val dt = match.second.coerceAtLeast(1L) / 1000f
                 vx = ((centerX(chosen.box) - centerX(p.box)) / dt).coerceIn(-3f, 3f)
                 vy = ((centerY(chosen.box) - centerY(p.box)) / dt).coerceIn(-3f, 3f)
                 acquire(chosen.box, chosen.score, captureTimeMs, receivedTimeMs, source)
-                pending = null
-                onDebugEvent("BALL_ACQUIRE_TWO_HIT score=${chosen.score} source=$source")
+                pending.clear()
+                onDebugEvent(
+                    "BALL_ACQUIRE_TWO_HIT score=${chosen.score} source=$source dtMs=${match.second} d=${match.third}"
+                )
                 return true
             }
 
-            pending = Pending(RectF(chosen.box), chosen.score, captureTimeMs, source)
-            onDebugEvent("BALL_PENDING score=${chosen.score} source=$source")
+            pending += Pending(RectF(chosen.box), chosen.score, captureTimeMs, source)
+            while (pending.size > 6) pending.removeAt(0)
+            onDebugEvent(
+                "BALL_PENDING score=${chosen.score} source=$source hypotheses=${pending.size}"
+            )
             return false
         }
 
         val predictedAtCapture = predictBox(captureTimeMs, allowExpired = true) ?: current
         val d = distance(predictedAtCapture, chosen.box)
 
-        val hardJump = d > 0.24f
+        val hardJump = d > 0.16f
         if (hardJump && chosen.score < 0.48f) {
             onDebugEvent("BALL_REJECT_JUMP d=$d score=${chosen.score} source=$source")
             return false
