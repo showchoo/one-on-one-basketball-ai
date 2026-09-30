@@ -178,8 +178,8 @@ class MotionBallProposer {
             val roi = centeredRoi(
                 oriented.first,
                 oriented.second,
-                0.24f,
-                0.34f
+                0.18f,
+                0.24f
             )
 
             rawProposals += Proposal(
