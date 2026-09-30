@@ -29,6 +29,11 @@ jobs:
           base64 --decode ci/stable-debug.keystore.b64 > ci/stable-debug.keystore
           chmod 600 ci/stable-debug.keystore
 
+      - name: Install bundled MC voice pack
+        run: |
+          mkdir -p app/src/main/assets
+          base64 --decode ci/mc_voice_pack.zip.b64 > app/src/main/assets/mc_voice_pack.zip
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
