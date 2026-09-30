@@ -138,6 +138,17 @@ class BasketballTracker(
         return best?.id
     }
 
+    private fun closestPlayerToBall(ballX: Float, ballY: Float): Char? {
+        return listOfNotNull(playerA, playerB)
+            .minByOrNull { player ->
+                hypot(
+                    (ballX - player.centerX).toDouble(),
+                    (ballY - player.centerY).toDouble()
+                )
+            }
+            ?.id
+    }
+
     private fun addBallSample(x: Float, y: Float, nowMs: Long) {
         ballHistory += BallSample(x, y, nowMs)
         pruneBallHistory(nowMs)
@@ -168,6 +179,18 @@ class BasketballTracker(
         when (hoopState) {
             HoopState.WAIT_ABOVE -> {
                 if (inLaneX && y <= aboveThreshold && y >= approachTop) {
+                    if (currentShotPlayer == null && lastPossessor == null) {
+                        val fallback = closestPlayerToBall(x, y)
+                        if (fallback != null) {
+                            currentShotPlayer = fallback
+                            currentShotValue = calculateShotValue(fallback)
+                            shotStartedMs = nowMs
+                            onDebugEvent(
+                                "SHOOTER_FALLBACK player=$fallback value=$currentShotValue ballX=$x ballY=$y"
+                            )
+                        }
+                    }
+
                     hoopState = HoopState.ARMED
                     armedAtMs = nowMs
                     armedBallY = y
