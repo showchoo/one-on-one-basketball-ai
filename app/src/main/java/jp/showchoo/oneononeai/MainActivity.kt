@@ -60,7 +60,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private data class BallPacket(
         val result: BallRoiDetectorEngine.Result,
         val captureTimeMs: Long,
-        val receivedTimeMs: Long
+        val receivedTimeMs: Long,
+        val reason: String,
+        val motionCount: Int
     )
 
     private lateinit var cameraExecutor: ExecutorService
@@ -71,6 +73,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var analysisBitmap: Bitmap? = null
 
     private lateinit var ballFusion: BallTrackFusion
+    private lateinit var motionBallProposer: MotionBallProposer
     private lateinit var playerIdentityTracker: PlayerIdentityTracker
     private val yoloBusy = AtomicBoolean(false)
     private val ballBusy = AtomicBoolean(false)
@@ -144,6 +147,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         cameraExecutor = Executors.newSingleThreadExecutor()
         yoloExecutor = Executors.newSingleThreadExecutor()
         ballExecutor = Executors.newSingleThreadExecutor()
+        motionBallProposer = MotionBallProposer()
         ballFusion = BallTrackFusion { event ->
             debugLogger.logEvent(
                 eventType = "BALL_FUSION_EVENT",
@@ -318,6 +322,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.startButton).setOnClickListener {
             tracker.resetSession()
             ballFusion.reset()
+            motionBallProposer.reset()
             playerIdentityTracker.reset()
             debugLogger.logEvent(
                 "START_PRESSED",
@@ -336,6 +341,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             game.reset()
             tracker.resetSession()
             ballFusion.reset()
+            motionBallProposer.reset()
             playerIdentityTracker.reset()
             commentary.reset()
             tts?.stop()
@@ -688,6 +694,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             Bitmap.Config.ARGB_8888
                         ).also { analysisBitmap = it }
 
+                    val motionProposals = motionBallProposer.update(image)
+
                     val buffer = image.planes[0].buffer
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
@@ -739,11 +747,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     pendingBall.getAndSet(null)?.let { packet ->
                         latestBallInferenceMs = packet.result.inferenceMs
+                        val fusionSource =
+                            if (packet.reason == "MOTION") {
+                                "BALL_MOTION_ROI"
+                            } else {
+                                "BALL_ROI_YOLO"
+                            }
+
                         val accepted = ballFusion.observe(
                             detections = packet.result.detections,
                             captureTimeMs = packet.captureTimeMs,
                             receivedTimeMs = packet.receivedTimeMs,
-                            source = "BALL_ROI_YOLO"
+                            source = fusionSource
                         )
 
                         debugLogger.logEvent(
@@ -752,6 +767,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 "accepted=" + accepted +
                                     "; candidates=" + packet.result.detections.size +
                                     "; inferenceMs=" + packet.result.inferenceMs +
+                                    "; reason=" + packet.reason +
+                                    "; motionCount=" + packet.motionCount +
                                     "; roi=" + packet.result.roi.left + "|" +
                                     packet.result.roi.top + "|" +
                                     packet.result.roi.right + "|" +
@@ -819,8 +836,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.5 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.5.1 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
+                                    "MOTION ${motionProposals.size} | " +
                                     ballText
 
                             if (game.running) {
@@ -829,7 +847,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         }
                     }
 
-                    val ballInterval = if (game.running) 120L else 220L
+                    val ballInterval = if (game.running) 80L else 180L
                     val bd = ballDetector
                     if (
                         bd != null &&
@@ -841,11 +859,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             bitmap.copy(Bitmap.Config.ARGB_8888, false)
                         val captureRotation = rotationDegrees
                         val captureTime = frameTime
-                        val roi = ballFusion.nextSearchRoi(
+                        val search = ballFusion.nextSearchRoi(
                             players = players,
                             hoop = tracker.hoopRect,
-                            nowMs = frameTime
+                            nowMs = frameTime,
+                            motionProposals = motionProposals
                         )
+                        val roi = search.rect
 
                         ballExecutor.execute {
                             try {
@@ -858,7 +878,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                     BallPacket(
                                         result = result,
                                         captureTimeMs = captureTime,
-                                        receivedTimeMs = SystemClock.uptimeMillis()
+                                        receivedTimeMs = SystemClock.uptimeMillis(),
+                                        reason = search.reason,
+                                        motionCount = motionProposals.size
                                     )
                                 )
                             } catch (e: Exception) {
