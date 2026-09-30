@@ -667,7 +667,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         motionProposals: List<MotionBallProposer.Proposal>,
         hoop: RectF?,
         wasLocked: Boolean,
-        nowMs: Long
+        nowMs: Long,
+        imageWidth: Int,
+        imageHeight: Int
     ): BallValidationResult {
         if (detections.isEmpty()) {
             return BallValidationResult(
@@ -713,11 +715,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val w = box.width().coerceAtLeast(0.0001f)
             val h = box.height().coerceAtLeast(0.0001f)
             val diameter = (w + h) / 2f
-            val aspect = w / h
+            // Boxes are stored in normalized coordinates. Comparing normalized
+            // width/height directly makes a true circle look vertically elongated
+            // on a 16:9 frame (about 0.5625 instead of 1.0). Convert back to
+            // pixel dimensions before applying the roundness gate.
+            val pixelW = w * imageWidth.coerceAtLeast(1)
+            val pixelH = h * imageHeight.coerceAtLeast(1)
+            val pixelAspect = pixelW / pixelH.coerceAtLeast(0.0001f)
             val cx = centerX(box)
             val cy = centerY(box)
 
-            if (aspect !in 0.62f..1.62f) return "SHAPE"
+            if (pixelAspect !in 0.62f..1.62f) return "SHAPE"
             if (diameter !in 0.004f..0.080f) return "SIZE"
 
             val playerBoxes = listOfNotNull(players.playerA, players.playerB)
@@ -950,7 +958,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             motionProposals = packet.motionAtCapture,
                             hoop = packet.hoopAtCapture,
                             wasLocked = packet.wasLockedAtCapture,
-                            nowMs = packet.receivedTimeMs
+                            nowMs = packet.receivedTimeMs,
+                            imageWidth = packet.result.imageWidth,
+                            imageHeight = packet.result.imageHeight
                         )
                         if (validation.diagnostics.isNotEmpty()) {
                             latestRawBallCandidates = validation.diagnostics
@@ -1073,7 +1083,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.6.3 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.6.4 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
