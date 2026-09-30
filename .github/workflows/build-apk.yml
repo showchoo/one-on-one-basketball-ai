@@ -84,7 +84,7 @@ jobs:
 
       - name: Export dedicated basketball YOLOv5 model to ONNX
         run: |
-          python3 -m pip install "onnx>=1.12" pandas pyyaml requests scipy torchvision tqdm psutil
+          python3 -m pip install "onnx>=1.12" pandas pyyaml requests scipy torchvision tqdm psutil seaborn
           git clone --filter=blob:none --no-checkout https://github.com/ultralytics/yolov5.git .model-build/yolov5
           git -C .model-build/yolov5 fetch --depth 1 origin 3f02fdee1d8f1a6cf18a24be3438096466367d9f
           git -C .model-build/yolov5 checkout FETCH_HEAD
