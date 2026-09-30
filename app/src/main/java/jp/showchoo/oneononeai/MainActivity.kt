@@ -428,7 +428,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
             analysis.setAnalyzer(cameraExecutor) { image ->
                 val now = SystemClock.uptimeMillis()
-                if (now - lastInferenceAt < 180L) {
+                if (now - lastInferenceAt < 100L) {
                     image.close()
                     return@setAnalyzer
                 }
