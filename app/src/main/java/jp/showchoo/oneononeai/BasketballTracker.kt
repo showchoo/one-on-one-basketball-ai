@@ -98,10 +98,11 @@ class BasketballTracker(
         val selected = selectBall(ballCandidates, nowMs)
         val ball = selected?.second
 
-        if (ball != null) {
+        if (selected != null) {
             val detection = selected.first
-            val bx = centerX(ball)
-            val by = centerY(ball)
+            val detectedBall = selected.second
+            val bx = centerX(detectedBall)
+            val by = centerY(detectedBall)
 
             ballHistory.addLast(
                 BallSample(
@@ -116,10 +117,10 @@ class BasketballTracker(
                 ballHistory.removeFirst()
             }
 
-            lastBallBox = ball
+            lastBallBox = detectedBall
             lastBallSeenMs = nowMs
 
-            updatePossessionAndReleaseCandidate(ball, nowMs)
+            updatePossessionAndReleaseCandidate(detectedBall, nowMs)
         } else if (nowMs - lastBallSeenMs > 900L) {
             lastBallBox = null
         }
