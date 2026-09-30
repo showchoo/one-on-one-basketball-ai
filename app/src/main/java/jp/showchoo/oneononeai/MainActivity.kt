@@ -52,8 +52,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var cameraExecutor: ExecutorService
     @Volatile private var detector: ObjectDetectorEngine? = null
     private var lastInferenceAt = 0L
-    private var lastFullFrameInferenceAt = 0L
-    private var lastPlayerFallbackAt = 0L
     private var analysisBitmap: Bitmap? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -252,17 +250,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         }
         findViewById<Button>(R.id.startButton).setOnClickListener {
-            if (tracker.hoopRect == null) {
-                statusText.text = "先にリング位置を設定してください"
-            } else {
-                tracker.resetSession()
-                debugLogger.logEvent(
-                    "START_PRESSED",
-                    detail = "threePointPoints=${tracker.threePointLine.size}"
-                )
-                game.start()
-                setControlsExpanded(false)
-                statusText.text = if (tracker.threePointLine.size >= 2) "LIVE / 自動1・2点判定" else "LIVE / 3P未設定・1点固定"
+            tracker.resetSession()
+            debugLogger.logEvent(
+                "START_PRESSED",
+                detail = "threePointPoints=${tracker.threePointLine.size}; hoopPreset=${tracker.hoopRect != null}"
+            )
+            game.start()
+            setControlsExpanded(false)
+            statusText.text = when {
+                tracker.hoopRect == null -> "LIVE / AIリング検出中"
+                tracker.threePointLine.size >= 2 -> "LIVE / 自動1・2点判定"
+                else -> "LIVE / 3P未設定・1点固定"
             }
         }
         findViewById<Button>(R.id.resetButton).setOnClickListener {
@@ -605,22 +603,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             analysis.setAnalyzer(cameraExecutor) { image ->
                 val now = SystemClock.uptimeMillis()
                 val fastTracking = game.running && tracker.needsFastBallTracking
-                val minInferenceInterval = if (fastTracking) 85L else 140L
+                val minInferenceInterval = if (fastTracking) 75L else 110L
                 if (now - lastInferenceAt < minInferenceInterval) {
                     image.close()
                     return@setAnalyzer
                 }
                 lastInferenceAt = now
-
-                val fullFrameInterval = if (fastTracking) 220L else 360L
-                val runFullFrame =
-                    tracker.hoopRect == null || now - lastFullFrameInferenceAt >= fullFrameInterval
-                if (runFullFrame) lastFullFrameInferenceAt = now
-
-                val playerFallbackInterval = if (fastTracking) 350L else 700L
-                val runPlayerFallback =
-                    runFullFrame && now - lastPlayerFallbackAt >= playerFallbackInterval
-                if (runPlayerFallback) lastPlayerFallbackAt = now
                 val d = detector
                 if (d == null) {
                     image.close()
@@ -642,9 +630,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val result = d.detect(
                         bitmap = bitmap,
                         rotationDegrees = image.imageInfo.rotationDegrees,
-                        hoopRect = tracker.hoopRect,
-                        runFullFrame = runFullFrame,
-                        runPlayerFallback = runPlayerFallback
+                        hoopRect = tracker.hoopRect
                     )
                     val snapshot = tracker.update(
                         result.detections,
@@ -670,9 +656,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         } else {
                             " | BALL --"
                         }
-                        val aiMode = if (runFullFrame) "FULL" else "RIM"
                         perfText.text =
-                            "ECO $aiMode ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
+                            "YOLO ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
                         if (game.running) statusText.text = snapshot.status
                     }
                 } catch (e: Exception) {
@@ -712,6 +697,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
+        detector?.close()
+        detector = null
         mcVoicePack.release()
         analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
         analysisBitmap = null
