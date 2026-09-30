@@ -43,6 +43,7 @@ class FastBallTracker {
     private var lastYoloMs = 0L
     private var appearance: Appearance? = null
     private var misses = 0
+    private var anchorLatencyMs = 0L
 
     @Synchronized
     fun reset() {
@@ -53,6 +54,7 @@ class FastBallTracker {
         lastYoloMs = 0L
         appearance = null
         misses = 0
+        anchorLatencyMs = 0L
     }
 
     @Synchronized
@@ -78,12 +80,14 @@ class FastBallTracker {
             }
         }
 
+        anchorLatencyMs = (receivedTimeMs - captureTimeMs).coerceIn(0L, 900L)
+
         val old = boxNorm
         if (old == null || lastUpdateMs <= 0L) {
             boxNorm = RectF(normalizedBox)
             lastUpdateMs = receivedTimeMs
             lastYoloMs = receivedTimeMs
-            misses = 0
+            misses = 2
             return
         }
 
@@ -150,11 +154,14 @@ class FastBallTracker {
         val hPx = max(5f, hNorm * oh)
 
         val speedPx = hypot((vx * ow).toDouble(), (vy * oh).toDouble()).toFloat()
+        val staleAnchorBoost =
+            min(anchorLatencyMs / 1000f * 220f, 68f)
         val searchRadius = (
             max(max(wPx, hPx) * 2.2f, 16f) +
                 min(speedPx * dt * 1.8f, 34f) +
-                misses * 5f
-        ).coerceIn(16f, 58f)
+                misses * 5f +
+                staleAnchorBoost
+        ).coerceIn(16f, 112f)
 
         val px = predictedX * ow
         val py = predictedY * oh
@@ -223,6 +230,7 @@ class FastBallTracker {
             source = "FAST_TRACK"
             confidence = bestScore.coerceIn(0f, 1f)
             misses = 0
+            anchorLatencyMs = 0L
 
             val measuredVx = ((nextX - centerX(current)) / dt).coerceIn(-3f, 3f)
             val measuredVy = ((nextY - centerY(current)) / dt).coerceIn(-3f, 3f)
