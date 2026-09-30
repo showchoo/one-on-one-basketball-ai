@@ -512,7 +512,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val buffer = image.planes[0].buffer
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
-                    val result = d.detect(bitmap, image.imageInfo.rotationDegrees)
+                    val result = d.detect(
+                        bitmap,
+                        image.imageInfo.rotationDegrees,
+                        tracker.hoopRect
+                    )
                     val snapshot = tracker.update(
                         result.detections,
                         result.imageWidth,
@@ -523,13 +527,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         snapshot = snapshot,
                         inferenceMs = result.inferenceMs,
                         detectionCount = result.detections.size,
+                        ballConfidence = result.ballConfidence,
+                        ballSource = result.ballSource,
+                        roiPasses = result.roiPasses,
                         scoreA = game.scoreA,
                         scoreB = game.scoreB
                     )
                     runOnUiThread {
                         overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
                         overlayView.update(snapshot, result.imageWidth, result.imageHeight)
-                        perfText.text = "AI ${result.inferenceMs} ms | ${result.detections.size} obj"
+                        val ballText = if (result.ballConfidence > 0f) {
+                            " | BALL %.2f %s".format(result.ballConfidence, result.ballSource)
+                        } else {
+                            " | BALL --"
+                        }
+                        perfText.text = "AI ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
                         if (game.running) statusText.text = snapshot.status
                     }
                 } catch (e: Exception) {
