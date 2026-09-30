@@ -70,6 +70,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val wasLockedAtCapture: Boolean
     )
 
+    private data class BallValidationResult(
+        val geometryAccepted: List<AiDetection>,
+        val accepted: List<AiDetection>,
+        val diagnostics: List<OverlayView.RawBallCandidate>,
+        val dropSummary: String
+    )
+
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var yoloExecutor: ExecutorService
     private lateinit var ballExecutor: ExecutorService
@@ -93,6 +100,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var latestYoloInferenceMs = 0L
     private var latestBallInferenceMs = 0L
     private var latestYoloDetectionCount = 0
+    private var latestRawBallCandidates: List<OverlayView.RawBallCandidate> = emptyList()
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -342,6 +350,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             ballSearchPlanner.reset()
             motionBallProposer.reset()
             playerIdentityTracker.reset()
+            latestRawBallCandidates = emptyList()
             debugLogger.logEvent(
                 "START_PRESSED",
                 detail = "threePointPoints=${tracker.threePointLine.size}; hoopPreset=${tracker.hoopRect != null}"
@@ -648,16 +657,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
 
-    private fun validateBallDetectionsForSearch(
+    private fun evaluateBallDetectionsForSearch(
         detections: List<AiDetection>,
         roi: RectF,
         reason: String,
         players: PlayerIdentityTracker.Snapshot,
         motionProposals: List<MotionBallProposer.Proposal>,
         hoop: RectF?,
-        wasLocked: Boolean
-    ): List<AiDetection> {
-        if (detections.isEmpty()) return emptyList()
+        wasLocked: Boolean,
+        nowMs: Long
+    ): BallValidationResult {
+        if (detections.isEmpty()) {
+            return BallValidationResult(
+                geometryAccepted = emptyList(),
+                accepted = emptyList(),
+                diagnostics = emptyList(),
+                dropSummary = "NONE"
+            )
+        }
 
         val roiCx = (roi.left + roi.right) / 2f
         val roiCy = (roi.top + roi.bottom) / 2f
@@ -689,7 +706,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 dy <= maxOf(0.13f, h.height() * 4.2f)
         }
 
-        return detections.filter { detection ->
+        fun geometryDropReason(detection: AiDetection): String? {
             val box = detection.box
             val w = box.width().coerceAtLeast(0.0001f)
             val h = box.height().coerceAtLeast(0.0001f)
@@ -698,62 +715,99 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val cx = centerX(box)
             val cy = centerY(box)
 
-            // Public basketball trackers commonly remove detections whose
-            // boxes are not approximately square before doing trajectory work.
-            val shapeOk = aspect in 0.62f..1.62f
-            val absoluteSizeOk = diameter in 0.004f..0.080f
-            if (!shapeOk || !absoluteSizeOk) {
-                false
-            } else {
-                val playerBoxes = listOfNotNull(players.playerA, players.playerB)
-                val nearPlayers = playerBoxes.filter { inExpandedPlayerZone(cx, cy, it) }
-                val nearAnyPlayer = nearPlayers.isNotEmpty()
-                val deepInsidePlayer = playerBoxes.any { inPlayerCore(cx, cy, it) }
-                val closeToHoop = nearHoop(cx, cy)
+            if (aspect !in 0.62f..1.62f) return "SHAPE"
+            if (diameter !in 0.004f..0.080f) return "SIZE"
 
-                val relativeSizeOk = if (nearPlayers.isNotEmpty()) {
-                    val nearest = nearPlayers.minByOrNull { p ->
-                        kotlin.math.hypot(
-                            (cx - centerX(p)).toDouble(),
-                            (cy - centerY(p)).toDouble()
-                        )
-                    }
-                    val playerHeight = nearest?.height()?.coerceAtLeast(0.02f) ?: 1f
-                    val ratio = diameter / playerHeight
-                    ratio in 0.025f..0.26f
-                } else {
-                    true
+            val playerBoxes = listOfNotNull(players.playerA, players.playerB)
+            val nearPlayers = playerBoxes.filter { inExpandedPlayerZone(cx, cy, it) }
+            val nearAnyPlayer = nearPlayers.isNotEmpty()
+            val deepInsidePlayer = playerBoxes.any { inPlayerCore(cx, cy, it) }
+            val closeToHoop = nearHoop(cx, cy)
+
+            if (nearPlayers.isNotEmpty()) {
+                val nearest = nearPlayers.minByOrNull { p ->
+                    kotlin.math.hypot(
+                        (cx - centerX(p)).toDouble(),
+                        (cy - centerY(p)).toDouble()
+                    )
                 }
-
-                val motionAligned = if (reason.startsWith("MOTION")) {
-                    val dx = kotlin.math.abs(cx - roiCx)
-                    val dy = kotlin.math.abs(cy - roiCy)
-                    val roiAligned =
-                        dx <= roi.width() * 0.28f &&
-                            dy <= roi.height() * 0.28f
-                    val proposalAligned = motionProposals.any { proposal ->
-                        kotlin.math.hypot(
-                            (cx - proposal.centerX).toDouble(),
-                            (cy - proposal.centerY).toDouble()
-                        ) <= 0.085
-                    }
-                    roiAligned && proposalAligned
-                } else {
-                    true
-                }
-
-                // Acquisition is possession-first. Before there is a trusted
-                // track, a new ball must originate around A/B or around the rim.
-                // This blocks the background false positives that dominated v0.5.
-                val acquisitionContextOk =
-                    wasLocked || nearAnyPlayer || closeToHoop
-
-                val coreOk = wasLocked || !deepInsidePlayer || closeToHoop
-
-                relativeSizeOk && motionAligned && acquisitionContextOk && coreOk
+                val playerHeight = nearest?.height()?.coerceAtLeast(0.02f) ?: 1f
+                val ratio = diameter / playerHeight
+                if (ratio !in 0.025f..0.26f) return "REL_SIZE"
             }
+
+            if (reason.startsWith("MOTION")) {
+                val dx = kotlin.math.abs(cx - roiCx)
+                val dy = kotlin.math.abs(cy - roiCy)
+                val roiAligned =
+                    dx <= roi.width() * 0.28f &&
+                        dy <= roi.height() * 0.28f
+                val proposalAligned = motionProposals.any { proposal ->
+                    kotlin.math.hypot(
+                        (cx - proposal.centerX).toDouble(),
+                        (cy - proposal.centerY).toDouble()
+                    ) <= 0.085
+                }
+                if (!roiAligned || !proposalAligned) return "MOTION"
+            }
+
+            if (!wasLocked && !nearAnyPlayer && !closeToHoop) {
+                return "ACQUIRE_ZONE"
+            }
+
+            if (!wasLocked && deepInsidePlayer && !closeToHoop) {
+                return "PLAYER_CORE"
+            }
+
+            return null
         }
+
+        val geometryAccepted = mutableListOf<AiDetection>()
+        val accepted = mutableListOf<AiDetection>()
+        val diagnostics = mutableListOf<OverlayView.RawBallCandidate>()
+        val dropCounts = linkedMapOf<String, Int>()
+
+        detections.take(5).forEach { detection ->
+            val geometryDrop = geometryDropReason(detection)
+            val finalReason = if (geometryDrop != null) {
+                geometryDrop
+            } else {
+                geometryAccepted += detection
+                val contextOk = ballContextTracker.candidateAllowed(
+                    box = detection.box,
+                    players = players,
+                    hoop = hoop,
+                    nowMs = nowMs,
+                    alreadyLocked = wasLocked
+                )
+                if (contextOk) {
+                    accepted += detection
+                    "PASS"
+                } else {
+                    "CONTEXT"
+                }
+            }
+
+            diagnostics += OverlayView.RawBallCandidate(
+                box = RectF(detection.box),
+                score = detection.score,
+                reason = finalReason
+            )
+            dropCounts[finalReason] = (dropCounts[finalReason] ?: 0) + 1
+        }
+
+        val dropSummary = dropCounts.entries.joinToString("|") {
+            it.key + ":" + it.value
+        }.ifEmpty { "NONE" }
+
+        return BallValidationResult(
+            geometryAccepted = geometryAccepted,
+            accepted = accepted,
+            diagnostics = diagnostics,
+            dropSummary = dropSummary
+        )
     }
+
     private fun addManualScore(player: Char, points: Int) {
         debugLogger.logEvent(
             eventType = "MANUAL_SCORE_REQUEST",
@@ -886,44 +940,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                         val rawDetections = packet.result.detections
-                        val geometryValidated = validateBallDetectionsForSearch(
+                        val validation = evaluateBallDetectionsForSearch(
                             detections = rawDetections,
                             roi = packet.result.roi,
                             reason = packet.reason,
                             players = packet.playersAtCapture,
                             motionProposals = packet.motionAtCapture,
                             hoop = packet.hoopAtCapture,
-                            wasLocked = packet.wasLockedAtCapture
+                            wasLocked = packet.wasLockedAtCapture,
+                            nowMs = packet.receivedTimeMs
                         )
-                        val validatedDetections = geometryValidated.filter {
-                            ballContextTracker.candidateAllowed(
-                                box = it.box,
-                                players = packet.playersAtCapture,
-                                hoop = packet.hoopAtCapture,
-                                nowMs = packet.receivedTimeMs,
-                                alreadyLocked = packet.wasLockedAtCapture
-                            )
-                        }
+                        latestRawBallCandidates = validation.diagnostics
 
                         val accepted = ballFusion.observe(
-                            detections = validatedDetections,
+                            detections = validation.accepted,
                             captureTimeMs = packet.captureTimeMs,
                             receivedTimeMs = packet.receivedTimeMs,
                             source = fusionSource
                         )
 
-                        val rawSummary = rawDetections
+                        val rawSummary = validation.diagnostics
                             .take(5)
                             .joinToString(",") {
                                 val cx = (it.box.left + it.box.right) / 2f
                                 val cy = (it.box.top + it.box.bottom) / 2f
-                                "%.3f@%.3f|%.3f|%.3f|%.3f".format(
+                                "%.3f@%.3f|%.3f|%.3f|%.3f:%s".format(
                                     Locale.US,
                                     it.score,
                                     cx,
                                     cy,
                                     it.box.width(),
-                                    it.box.height()
+                                    it.box.height(),
+                                    it.reason
                                 )
                             }
 
@@ -932,12 +980,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             detail =
                                 "accepted=" + accepted +
                                     "; rawCandidates=" + rawDetections.size +
-                                    "; geometryCandidates=" + geometryValidated.size +
-                                    "; candidates=" + validatedDetections.size +
+                                    "; geometryCandidates=" + validation.geometryAccepted.size +
+                                    "; candidates=" + validation.accepted.size +
                                     "; context=" + ballContextTracker.currentMode() +
                                     "; inferenceMs=" + packet.result.inferenceMs +
                                     "; reason=" + packet.reason +
                                     "; motionCount=" + packet.motionCount +
+                                    "; drops=" + validation.dropSummary +
                                     "; roi=" + packet.result.roi.left + "|" +
                                     packet.result.roi.top + "|" +
                                     packet.result.roi.right + "|" +
@@ -999,7 +1048,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             overlayView.update(
                                 snapshot,
                                 displayWidth,
-                                displayHeight
+                                displayHeight,
+                                latestRawBallCandidates
                             )
 
                             val ballText = if (fusedBall != null) {
@@ -1012,7 +1062,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.6.2 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.6.3 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
