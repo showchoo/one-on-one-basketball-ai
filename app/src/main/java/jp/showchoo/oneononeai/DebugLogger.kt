@@ -25,8 +25,8 @@ class DebugLogger(context: Context) {
         writer = BufferedWriter(FileWriter(currentFile, true))
         writer?.write(
             "timestamp,event_type,status,inference_ms,detection_count," +
-                "player_a,player_b,ball,last_possessor,shot_player,shot_value," +
-                "score_a,score_b,points,detail\n"
+                "player_a,player_b,ball,ball_conf,ball_source,roi_passes," +
+                "last_possessor,shot_player,shot_value,score_a,score_b,points,detail\n"
         )
         logEvent(
             eventType = "APP_START",
@@ -38,6 +38,9 @@ class DebugLogger(context: Context) {
         snapshot: TrackerSnapshot,
         inferenceMs: Long,
         detectionCount: Int,
+        ballConfidence: Float,
+        ballSource: String,
+        roiPasses: Int,
         scoreA: Int,
         scoreB: Int
     ) {
@@ -49,6 +52,9 @@ class DebugLogger(context: Context) {
             playerA = rect(snapshot.playerA),
             playerB = rect(snapshot.playerB),
             ball = rect(snapshot.ball),
+            ballConfidence = String.format(Locale.US, "%.4f", ballConfidence),
+            ballSource = ballSource,
+            roiPasses = roiPasses.toString(),
             lastPossessor = snapshot.lastPossessor?.toString().orEmpty(),
             shotPlayer = snapshot.shotPlayer?.toString().orEmpty(),
             shotValue = snapshot.shotValue.toString(),
@@ -97,6 +103,9 @@ class DebugLogger(context: Context) {
         playerA: String = "",
         playerB: String = "",
         ball: String = "",
+        ballConfidence: String = "",
+        ballSource: String = "",
+        roiPasses: String = "",
         lastPossessor: String = "",
         shotPlayer: String = "",
         shotValue: String = "",
@@ -114,6 +123,9 @@ class DebugLogger(context: Context) {
             playerA,
             playerB,
             ball,
+            ballConfidence,
+            ballSource,
+            roiPasses,
             lastPossessor,
             shotPlayer,
             shotValue,
