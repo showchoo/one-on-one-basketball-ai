@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var tracker: BasketballTracker
     private lateinit var commentary: CommentaryEngine
     private lateinit var commentaryButton: Button
+    private lateinit var mcVoicePackButton: Button
     private lateinit var controlsToggleButton: Button
     private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
@@ -81,8 +82,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         val result = mcVoicePack.importZip(uri)
         result.onSuccess { packName ->
-            statusText.text = "MC音声パック: $packName"
-            debugLogger.logEvent("MC_VOICE_PACK_IMPORTED", detail = "name=$packName")
+            updateMcVoiceButton()
+            statusText.text = "MC音声: $packName"
+            debugLogger.logEvent(
+                "MC_VOICE_PACK_IMPORTED",
+                detail = "name=$packName; clips=${mcVoicePack.clipCount}"
+            )
+            tts?.stop()
             mcVoicePack.previewAll()
         }.onFailure { error ->
             statusText.text = "MC音声パック読込失敗"
@@ -214,7 +220,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             showVoiceSettings()
         }
 
-        findViewById<Button>(R.id.mcVoicePackButton).setOnClickListener {
+        mcVoicePackButton = findViewById(R.id.mcVoicePackButton)
+        updateMcVoiceButton()
+        mcVoicePackButton.setOnClickListener {
             showMcVoicePackMenu()
         }
 
@@ -450,6 +458,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .show()
     }
 
+    private fun updateMcVoiceButton() {
+        if (!::mcVoicePackButton.isInitialized) return
+        val scoreReady = mcVoicePack.has("score_1") && mcVoicePack.has("score_2")
+        mcVoicePackButton.text = if (scoreReady) "MC: ON" else "MC読込"
+    }
+
     private fun showMcVoicePackMenu() {
         val hasPack = mcVoicePack.has("are_you_ready") ||
             mcVoicePack.has("game_over") ||
@@ -462,7 +476,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         AlertDialog.Builder(this)
             .setTitle("MC音声パック")
-            .setMessage("${mcVoicePack.name}\n${mcVoicePack.clipCount} clips loaded")
+            .setMessage(
+                "${mcVoicePack.name}\n${mcVoicePack.clipCount} clips loaded\n" +
+                    if (mcVoicePack.has("score_1") && mcVoicePack.has("score_2")) {
+                        "通常得点もMC音声で再生"
+                    } else {
+                        "通常得点はTTSへフォールバック"
+                    }
+            )
             .setPositiveButton("試聴") { _, _ ->
                 tts?.stop()
                 mcVoicePack.previewAll()
