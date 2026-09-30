@@ -25,7 +25,8 @@ class PlayerIdentityTracker(
     private data class Observation(
         val box: RectF,
         val score: Float,
-        val color: FloatArray?
+        val color: FloatArray?,
+        val histogram: FloatArray?
     )
 
     private data class Track(
@@ -34,7 +35,8 @@ class PlayerIdentityTracker(
         var lastSeenMs: Long,
         var vx: Float = 0f,
         var vy: Float = 0f,
-        var color: FloatArray? = null
+        var color: FloatArray? = null,
+        var histogram: FloatArray? = null
     )
 
     private var a: Track? = null
@@ -66,7 +68,8 @@ class PlayerIdentityTracker(
                         floatArrayOf(it.appearanceR, it.appearanceG, it.appearanceB)
                     } else {
                         null
-                    }
+                    },
+                    histogram = it.appearanceHistogram
                 )
             }
             .sortedByDescending { it.score }
@@ -81,8 +84,20 @@ class PlayerIdentityTracker(
                 .take(2)
                 .sortedBy { centerX(it.box) }
 
-            a = Track('A', RectF(initial[0].box), nowMs, color = initial[0].color)
-            b = Track('B', RectF(initial[1].box), nowMs, color = initial[1].color)
+            a = Track(
+                'A',
+                RectF(initial[0].box),
+                nowMs,
+                color = initial[0].color,
+                histogram = initial[0].histogram?.copyOf()
+            )
+            b = Track(
+                'B',
+                RectF(initial[1].box),
+                nowMs,
+                color = initial[1].color,
+                histogram = initial[1].histogram?.copyOf()
+            )
             onDebugEvent("PLAYER_IDS_LOCKED initial=left-right")
             return
         }
@@ -99,10 +114,14 @@ class PlayerIdentityTracker(
 
         if (closeCluster) {
             val colorResolvable =
-                ta.color != null &&
+                (ta.histogram != null &&
+                    tb.histogram != null &&
+                    observations[0].histogram != null &&
+                    observations[1].histogram != null) ||
+                (ta.color != null &&
                     tb.color != null &&
                     observations[0].color != null &&
-                    observations[1].color != null
+                    observations[1].color != null)
 
             if (!colorResolvable) {
                 onDebugEvent("PLAYER_IDS_HELD crossing_cluster=true")
@@ -217,14 +236,16 @@ class PlayerIdentityTracker(
         val newArea = max(area(obs.box), 0.0005f)
         val scalePenalty = abs(ln((newArea / oldArea).toDouble())).toFloat() * 0.055f
 
-        val colorPenalty = if (track.color != null && obs.color != null) {
-            colorDistance(track.color!!, obs.color!!) * 0.82f
-        } else {
-            0f
+        val appearancePenalty = when {
+            track.histogram != null && obs.histogram != null ->
+                histogramDistance(track.histogram!!, obs.histogram!!) * 0.42f
+            track.color != null && obs.color != null ->
+                colorDistance(track.color!!, obs.color!!) * 0.82f
+            else -> 0f
         }
 
         val overlapBonus = iou(track.box, obs.box) * 0.08f
-        return spatial + scalePenalty + colorPenalty - overlapBonus
+        return spatial + scalePenalty + appearancePenalty - overlapBonus
     }
 
     private fun updateTrack(track: Track, obs: Observation, nowMs: Long) {
@@ -243,16 +264,25 @@ class PlayerIdentityTracker(
             val old = track.color
             track.color = if (old == null) {
                 obs.color.copyOf()
+            } else if (colorDistance(old, obs.color) < 0.18f) {
+                floatArrayOf(
+                    old[0] * 0.98f + obs.color[0] * 0.02f,
+                    old[1] * 0.98f + obs.color[1] * 0.02f,
+                    old[2] * 0.98f + obs.color[2] * 0.02f
+                )
             } else {
-                if (colorDistance(old, obs.color) < 0.18f) {
-                    floatArrayOf(
-                        old[0] * 0.98f + obs.color[0] * 0.02f,
-                        old[1] * 0.98f + obs.color[1] * 0.02f,
-                        old[2] * 0.98f + obs.color[2] * 0.02f
-                    )
-                } else {
-                    old
-                }
+                old
+            }
+        }
+
+        if (obs.histogram != null) {
+            val old = track.histogram
+            track.histogram = if (old == null) {
+                obs.histogram.copyOf()
+            } else if (histogramDistance(old, obs.histogram) < 0.48f) {
+                blendHistogram(old, obs.histogram, 0.025f)
+            } else {
+                old
             }
         }
     }
@@ -272,6 +302,38 @@ class PlayerIdentityTracker(
             (track.box.right + dx).coerceIn(0f, 1f),
             (track.box.bottom + dy).coerceIn(0f, 1f)
         )
+    }
+
+    private fun histogramDistance(a: FloatArray, b: FloatArray): Float {
+        if (a.size != b.size || a.isEmpty()) return 1f
+        var dot = 0f
+        var normA = 0f
+        var normB = 0f
+        for (i in a.indices) {
+            dot += a[i] * b[i]
+            normA += a[i] * a[i]
+            normB += b[i] * b[i]
+        }
+        val denom = sqrt(normA * normB).coerceAtLeast(0.0001f)
+        val cosine = (dot / denom).coerceIn(-1f, 1f)
+        return 1f - cosine
+    }
+
+    private fun blendHistogram(
+        old: FloatArray,
+        fresh: FloatArray,
+        alpha: Float
+    ): FloatArray {
+        if (old.size != fresh.size) return old
+        val out = FloatArray(old.size)
+        var norm = 0f
+        for (i in old.indices) {
+            out[i] = old[i] * (1f - alpha) + fresh[i] * alpha
+            norm += out[i] * out[i]
+        }
+        norm = sqrt(norm).coerceAtLeast(0.0001f)
+        for (i in out.indices) out[i] /= norm
+        return out
     }
 
     private fun colorDistance(a: FloatArray, b: FloatArray): Float {
