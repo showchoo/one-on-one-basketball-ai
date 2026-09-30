@@ -12,8 +12,24 @@ class BasketballTracker(
     var hoopRect: RectF? = null
     var threePointLine: List<PointF> = emptyList()
 
+    private data class PlayerObservation(
+        val box: RectF,
+        val score: Float,
+        val r: Float,
+        val g: Float,
+        val b: Float
+    ) {
+        val hasColor: Boolean get() = r >= 0f && g >= 0f && b >= 0f
+    }
+
     private var playerA: PlayerTrack? = null
     private var playerB: PlayerTrack? = null
+    private var playerAVx = 0f
+    private var playerAVy = 0f
+    private var playerBVx = 0f
+    private var playerBVy = 0f
+    private var playerAColor: FloatArray? = null
+    private var playerBColor: FloatArray? = null
     private var lastPossessor: Char? = null
 
     private data class BallSample(
@@ -82,9 +98,15 @@ class BasketballTracker(
 
         val people = detections
             .filter { it.label == "person" }
-            .map { normalize(it.box, width, height) }
-            .sortedByDescending { it.width() * it.height() }
-            .take(2)
+            .map {
+                PlayerObservation(
+                    box = normalize(it.box, width, height),
+                    score = it.score,
+                    r = it.appearanceR,
+                    g = it.appearanceG,
+                    b = it.appearanceB
+                )
+            }
         updatePlayers(people, nowMs)
 
         updateHoopFromDetector(detections, width, height)
@@ -129,34 +151,195 @@ class BasketballTracker(
         return snapshot(ball, status)
     }
 
-    private fun updatePlayers(people: List<RectF>, nowMs: Long) {
-        if (people.size < 2) return
+    private fun updatePlayers(people: List<PlayerObservation>, nowMs: Long) {
+        if (people.isEmpty()) return
 
         if (playerA == null || playerB == null) {
-            val sorted = people.sortedBy { centerX(it) }
-            playerA = PlayerTrack('A', sorted[0], nowMs)
-            playerB = PlayerTrack('B', sorted[1], nowMs)
+            if (people.size < 2) return
+            val initial = people
+                .sortedByDescending { it.score + it.box.width() * it.box.height() }
+                .take(2)
+                .sortedBy { centerX(it.box) }
+
+            playerA = PlayerTrack('A', RectF(initial[0].box), nowMs)
+            playerB = PlayerTrack('B', RectF(initial[1].box), nowMs)
+            playerAColor = observationColor(initial[0])
+            playerBColor = observationColor(initial[1])
+            playerAVx = 0f
+            playerAVy = 0f
+            playerBVx = 0f
+            playerBVy = 0f
+            onDebugEvent("PLAYER_IDS_INITIALIZED")
             return
         }
 
         val a = playerA!!
         val b = playerB!!
-        val p0 = people[0]
-        val p1 = people[1]
 
-        val direct = distance(a.box, p0) + distance(b.box, p1)
-        val crossed = distance(a.box, p1) + distance(b.box, p0)
+        var bestA: PlayerObservation? = null
+        var bestB: PlayerObservation? = null
+        var bestTotal = Float.MAX_VALUE
 
-        if (direct <= crossed) {
-            a.box = p0
-            b.box = p1
-        } else {
-            a.box = p1
-            b.box = p0
+        if (people.size >= 2) {
+            for (i in people.indices) {
+                for (j in people.indices) {
+                    if (i == j) continue
+
+                    val costA = playerMatchCost(
+                        track = a,
+                        vx = playerAVx,
+                        vy = playerAVy,
+                        color = playerAColor,
+                        obs = people[i],
+                        nowMs = nowMs
+                    )
+                    val costB = playerMatchCost(
+                        track = b,
+                        vx = playerBVx,
+                        vy = playerBVy,
+                        color = playerBColor,
+                        obs = people[j],
+                        nowMs = nowMs
+                    )
+
+                    if (!costA.isFinite() || !costB.isFinite()) continue
+                    val total = costA + costB
+                    if (total < bestTotal) {
+                        bestTotal = total
+                        bestA = people[i]
+                        bestB = people[j]
+                    }
+                }
+            }
         }
 
-        a.lastSeenMs = nowMs
-        b.lastSeenMs = nowMs
+        if (bestA != null && bestB != null && bestTotal < 1.0f) {
+            val aVelocity = updatePlayerTrack(a, bestA, playerAVx, playerAVy, nowMs)
+            playerAVx = aVelocity.first
+            playerAVy = aVelocity.second
+            playerAColor = updateColor(playerAColor, bestA)
+
+            val bVelocity = updatePlayerTrack(b, bestB, playerBVx, playerBVy, nowMs)
+            playerBVx = bVelocity.first
+            playerBVy = bVelocity.second
+            playerBColor = updateColor(playerBColor, bestB)
+            return
+        }
+
+        // Ambiguous frame: keep old identities rather than swapping them.
+        val aBest = people
+            .map { it to playerMatchCost(a, playerAVx, playerAVy, playerAColor, it, nowMs) }
+            .filter { it.second.isFinite() }
+            .minByOrNull { it.second }
+
+        val bBest = people
+            .map { it to playerMatchCost(b, playerBVx, playerBVy, playerBColor, it, nowMs) }
+            .filter { it.second.isFinite() }
+            .minByOrNull { it.second }
+
+        if (aBest != null && aBest.second < 0.38f &&
+            (bBest == null || aBest.first !== bBest.first || aBest.second + 0.08f < bBest.second)
+        ) {
+            val velocity = updatePlayerTrack(a, aBest.first, playerAVx, playerAVy, nowMs)
+            playerAVx = velocity.first
+            playerAVy = velocity.second
+            playerAColor = updateColor(playerAColor, aBest.first)
+        }
+
+        if (bBest != null && bBest.second < 0.38f &&
+            (aBest == null || bBest.first !== aBest.first || bBest.second + 0.08f < aBest.second)
+        ) {
+            val velocity = updatePlayerTrack(b, bBest.first, playerBVx, playerBVy, nowMs)
+            playerBVx = velocity.first
+            playerBVy = velocity.second
+            playerBColor = updateColor(playerBColor, bBest.first)
+        }
+    }
+
+    private fun playerMatchCost(
+        track: PlayerTrack,
+        vx: Float,
+        vy: Float,
+        color: FloatArray?,
+        obs: PlayerObservation,
+        nowMs: Long
+    ): Float {
+        val dt = ((nowMs - track.lastSeenMs).coerceIn(0L, 900L)) / 1000f
+        val predictedX = (track.centerX + vx * dt).coerceIn(0f, 1f)
+        val predictedY = (track.centerY + vy * dt).coerceIn(0f, 1f)
+        val d = hypot(
+            (centerX(obs.box) - predictedX).toDouble(),
+            (centerY(obs.box) - predictedY).toDouble()
+        ).toFloat()
+
+        val gate = if (nowMs - track.lastSeenMs <= 650L) 0.28f else 0.46f
+        if (d > gate) return Float.POSITIVE_INFINITY
+
+        val trackArea = (track.box.width() * track.box.height()).coerceAtLeast(0.0005f)
+        val obsArea = (obs.box.width() * obs.box.height()).coerceAtLeast(0.0005f)
+        val sizePenalty = kotlin.math.abs(
+            kotlin.math.ln((obsArea / trackArea).toDouble())
+        ).toFloat() * 0.06f
+
+        val obsColor = observationColor(obs)
+        val colorPenalty = if (color != null && obsColor != null) {
+            val dr = color[0] - obsColor[0]
+            val dg = color[1] - obsColor[1]
+            val db = color[2] - obsColor[2]
+            kotlin.math.sqrt(dr * dr + dg * dg + db * db) * 0.75f
+        } else {
+            0f
+        }
+
+        return d + sizePenalty + colorPenalty - rectIou(track.box, obs.box) * 0.08f
+    }
+
+    private fun updatePlayerTrack(
+        track: PlayerTrack,
+        obs: PlayerObservation,
+        oldVx: Float,
+        oldVy: Float,
+        nowMs: Long
+    ): Pair<Float, Float> {
+        val oldX = track.centerX
+        val oldY = track.centerY
+        val dt = ((nowMs - track.lastSeenMs).coerceAtLeast(1L)) / 1000f
+        val measuredVx = ((centerX(obs.box) - oldX) / dt).coerceIn(-1.2f, 1.2f)
+        val measuredVy = ((centerY(obs.box) - oldY) / dt).coerceIn(-1.2f, 1.2f)
+
+        track.box = RectF(obs.box)
+        track.lastSeenMs = nowMs
+
+        return Pair(
+            oldVx * 0.62f + measuredVx * 0.38f,
+            oldVy * 0.62f + measuredVy * 0.38f
+        )
+    }
+
+    private fun observationColor(obs: PlayerObservation): FloatArray? =
+        if (obs.hasColor) floatArrayOf(obs.r, obs.g, obs.b) else null
+
+    private fun updateColor(old: FloatArray?, obs: PlayerObservation): FloatArray? {
+        val fresh = observationColor(obs) ?: return old
+        if (old == null) return fresh
+
+        val alpha = 0.10f
+        return floatArrayOf(
+            lerp(old[0], fresh[0], alpha),
+            lerp(old[1], fresh[1], alpha),
+            lerp(old[2], fresh[2], alpha)
+        )
+    }
+
+    private fun rectIou(a: RectF, b: RectF): Float {
+        val left = kotlin.math.max(a.left, b.left)
+        val top = kotlin.math.max(a.top, b.top)
+        val right = kotlin.math.min(a.right, b.right)
+        val bottom = kotlin.math.min(a.bottom, b.bottom)
+        val intersection =
+            kotlin.math.max(0f, right - left) * kotlin.math.max(0f, bottom - top)
+        val union = a.width() * a.height() + b.width() * b.height() - intersection
+        return if (union <= 0f) 0f else intersection / union
     }
 
     private fun updateHoopFromDetector(
