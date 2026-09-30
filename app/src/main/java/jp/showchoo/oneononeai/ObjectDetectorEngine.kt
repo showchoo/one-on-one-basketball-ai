@@ -233,10 +233,16 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
                     label = label,
                     score = candidate.score,
                     box = candidate.box,
-                    source = "BASKET_YOLO",
+                    source = "SCENE_YOLO",
                     appearanceR = appearance?.getOrNull(0) ?: -1f,
                     appearanceG = appearance?.getOrNull(1) ?: -1f,
-                    appearanceB = appearance?.getOrNull(2) ?: -1f
+                    appearanceB = appearance?.getOrNull(2) ?: -1f,
+                    appearanceHistogram =
+                        if (candidate.classId == PLAYER) {
+                            sampleTorsoHistogram(rotated, candidate.box)
+                        } else {
+                            null
+                        }
                 )
             }
 
@@ -258,6 +264,65 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
                 rotated.recycle()
             }
         }
+    }
+
+    private fun sampleTorsoHistogram(bitmap: Bitmap, box: RectF): FloatArray? {
+        val left = (box.left + box.width() * 0.20f).toInt().coerceIn(0, bitmap.width - 1)
+        val right = (box.right - box.width() * 0.20f).toInt().coerceIn(left + 1, bitmap.width)
+        val top = (box.top + box.height() * 0.16f).toInt().coerceIn(0, bitmap.height - 1)
+        val bottom = (box.top + box.height() * 0.62f).toInt().coerceIn(top + 1, bitmap.height)
+        if (right - left < 6 || bottom - top < 6) return null
+
+        // 12-bin descriptor: 8 hue sectors + low/high saturation + dark/bright.
+        val hist = FloatArray(12)
+        val stepX = max(2, (right - left) / 20)
+        val stepY = max(2, (bottom - top) / 24)
+        var count = 0f
+
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel) / 255f
+                val g = Color.green(pixel) / 255f
+                val b = Color.blue(pixel) / 255f
+                val maxC = max(r, max(g, b))
+                val minC = min(r, min(g, b))
+                val delta = maxC - minC
+                val value = maxC
+
+                if (value > 0.10f && value < 0.97f) {
+                    val saturation = if (maxC <= 0.001f) 0f else delta / maxC
+                    var hue = 0f
+                    if (delta > 0.001f) {
+                        hue = when (maxC) {
+                            r -> ((g - b) / delta) % 6f
+                            g -> ((b - r) / delta) + 2f
+                            else -> ((r - g) / delta) + 4f
+                        } * 60f
+                        if (hue < 0f) hue += 360f
+                    }
+
+                    if (saturation >= 0.12f) {
+                        val hueBin = ((hue / 45f).toInt()).coerceIn(0, 7)
+                        hist[hueBin] += 1f
+                    }
+                    hist[8 + if (saturation >= 0.45f) 1 else 0] += 0.45f
+                    hist[10 + if (value >= 0.52f) 1 else 0] += 0.30f
+                    count += 1f
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+
+        if (count < 8f) return null
+        var norm = 0f
+        for (v in hist) norm += v * v
+        norm = kotlin.math.sqrt(norm).coerceAtLeast(0.001f)
+        for (i in hist.indices) hist[i] /= norm
+        return hist
     }
 
     private fun sampleTorsoAppearance(bitmap: Bitmap, box: RectF): FloatArray? {
