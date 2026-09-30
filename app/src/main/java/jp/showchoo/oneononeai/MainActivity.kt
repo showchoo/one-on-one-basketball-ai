@@ -101,6 +101,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var latestBallInferenceMs = 0L
     private var latestYoloDetectionCount = 0
     private var latestRawBallCandidates: List<OverlayView.RawBallCandidate> = emptyList()
+    private var latestRawBallCandidatesAt = 0L
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -351,6 +352,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             motionBallProposer.reset()
             playerIdentityTracker.reset()
             latestRawBallCandidates = emptyList()
+            latestRawBallCandidatesAt = 0L
             debugLogger.logEvent(
                 "START_PRESSED",
                 detail = "threePointPoints=${tracker.threePointLine.size}; hoopPreset=${tracker.hoopRect != null}"
@@ -950,7 +952,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             wasLocked = packet.wasLockedAtCapture,
                             nowMs = packet.receivedTimeMs
                         )
-                        latestRawBallCandidates = validation.diagnostics
+                        if (validation.diagnostics.isNotEmpty()) {
+                            latestRawBallCandidates = validation.diagnostics
+                            latestRawBallCandidatesAt = packet.receivedTimeMs
+                        }
 
                         val accepted = ballFusion.observe(
                             detections = validation.accepted,
@@ -1040,6 +1045,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     if (frameTime - lastUiAt >= 50L) {
                         lastUiAt = frameTime
+                        val rawBallOverlay =
+                            if (frameTime - latestRawBallCandidatesAt <= 650L) {
+                                latestRawBallCandidates
+                            } else {
+                                emptyList()
+                            }
                         runOnUiThread {
                             overlayView.setCalibration(
                                 tracker.hoopRect,
@@ -1049,7 +1060,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 snapshot,
                                 displayWidth,
                                 displayHeight,
-                                latestRawBallCandidates
+                                rawBallOverlay
                             )
 
                             val ballText = if (fusedBall != null) {
