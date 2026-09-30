@@ -231,7 +231,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
             overlayView.calibrateHoop { rect ->
-                tracker.hoopRect = rect
+                tracker.setManualHoop(rect)
                 debugLogger.logEvent("HOOP_CALIBRATED", detail = "rect=${rect.left}|${rect.top}|${rect.right}|${rect.bottom}")
                 overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
                 statusText.text = "リング設定済み / 3Pラインを設定"
