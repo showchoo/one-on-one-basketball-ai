@@ -410,9 +410,10 @@ class BasketballTracker(
         }
 
         val previous = lastBallBox
-        if (previous != null && nowMs - lastBallSeenMs <= 700L) {
-            val px = centerX(previous)
-            val py = centerY(previous)
+        if (previous != null && nowMs - lastBallSeenMs <= 1100L) {
+            val dt = (nowMs - lastBallSeenMs) / 1000f
+            val px = centerX(previous) + ballVx * dt
+            val py = centerY(previous) + ballVy * dt + 0.5f * 0.75f * dt * dt
             val continuous = candidates
                 .map { pair ->
                     val d = hypot(
@@ -421,14 +422,79 @@ class BasketballTracker(
                     ).toFloat()
                     pair to d
                 }
-                .filter { it.second <= 0.28f }
+                .filter { it.second <= 0.34f }
 
             if (continuous.isNotEmpty()) {
-                return continuous.minByOrNull { it.second - it.first.first.score * 0.10f }?.first
+                return continuous.minByOrNull {
+                    it.second - it.first.first.score * 0.12f
+                }?.first
             }
         }
 
         return candidates.maxByOrNull { it.first.score }
+    }
+
+    private fun updateBallMotion(ball: RectF, score: Float, nowMs: Long) {
+        val x = centerX(ball)
+        val y = centerY(ball)
+
+        val previous = lastBallBox
+        if (previous != null && lastBallSeenMs > 0L) {
+            val dtMs = nowMs - lastBallSeenMs
+            if (dtMs in 30L..1200L) {
+                val dt = dtMs / 1000f
+                val measuredVx =
+                    ((x - centerX(previous)) / dt).coerceIn(-2.5f, 2.5f)
+                val measuredVy =
+                    ((y - centerY(previous)) / dt).coerceIn(-2.5f, 2.5f)
+
+                val alpha = 0.55f
+                ballVx = ballVx * (1f - alpha) + measuredVx * alpha
+                ballVy = ballVy * (1f - alpha) + measuredVy * alpha
+            }
+        }
+
+        lastBallBox = RectF(ball)
+        lastBallSeenMs = nowMs
+        ballHistory.addLast(
+            BallSample(
+                x = x,
+                y = y,
+                timeMs = nowMs,
+                score = score,
+                predicted = false
+            )
+        )
+        trimBallHistory(nowMs)
+    }
+
+    private fun predictBall(nowMs: Long): RectF? {
+        val last = lastBallBox ?: return null
+        val gapMs = nowMs - lastBallSeenMs
+        if (gapMs !in 1L..900L) return null
+
+        val dt = gapMs / 1000f
+        val x = centerX(last) + ballVx * dt
+        val y = centerY(last) + ballVy * dt + 0.5f * 0.75f * dt * dt
+        if (x !in -0.10f..1.10f || y !in -0.15f..1.20f) return null
+
+        val halfW = kotlin.math.max(last.width() / 2f, 0.006f)
+        val halfH = kotlin.math.max(last.height() / 2f, 0.006f)
+        return RectF(
+            (x - halfW).coerceIn(0f, 1f),
+            (y - halfH).coerceIn(0f, 1f),
+            (x + halfW).coerceIn(0f, 1f),
+            (y + halfH).coerceIn(0f, 1f)
+        )
+    }
+
+    private fun trimBallHistory(nowMs: Long) {
+        while (ballHistory.size > 140) ballHistory.removeFirst()
+        while (ballHistory.isNotEmpty() &&
+            nowMs - ballHistory.first().timeMs > 8000L
+        ) {
+            ballHistory.removeFirst()
+        }
     }
 
     private fun updatePossessionAndReleaseCandidate(ball: RectF, nowMs: Long) {
