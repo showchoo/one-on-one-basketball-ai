@@ -31,6 +31,8 @@ import androidx.core.content.FileProvider
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     companion object {
@@ -49,10 +51,27 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var statusText: TextView
     private lateinit var perfText: TextView
 
+    private data class YoloPacket(
+        val result: ObjectDetectorEngine.Result,
+        val captureTimeMs: Long,
+        val receivedTimeMs: Long
+    )
+
     private lateinit var cameraExecutor: ExecutorService
+    private lateinit var yoloExecutor: ExecutorService
     @Volatile private var detector: ObjectDetectorEngine? = null
-    private var lastInferenceAt = 0L
     private var analysisBitmap: Bitmap? = null
+
+    private lateinit var fastBallTracker: FastBallTracker
+    private lateinit var playerIdentityTracker: PlayerIdentityTracker
+    private val yoloBusy = AtomicBoolean(false)
+    private val pendingYolo = AtomicReference<YoloPacket?>(null)
+    private var lastYoloLaunchAt = 0L
+    private var lastLogAt = 0L
+    private var lastUiAt = 0L
+    private var latestYoloInferenceMs = 0L
+    private var latestYoloDetectionCount = 0
+
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
@@ -111,6 +130,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         mcVoicePack = McVoicePack(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
+        yoloExecutor = Executors.newSingleThreadExecutor()
+        fastBallTracker = FastBallTracker()
+        playerIdentityTracker = PlayerIdentityTracker { event ->
+            debugLogger.logEvent(
+                eventType = "PLAYER_TRACKER_EVENT",
+                scoreA = if (::game.isInitialized) game.scoreA else null,
+                scoreB = if (::game.isInitialized) game.scoreB else null,
+                detail = event
+            )
+        }
 
         commentary = CommentaryEngine(CommentaryMode.LIVE)
         game = GameEngine(
@@ -177,12 +206,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         )
 
         bindControls()
-        cameraExecutor.execute {
+        yoloExecutor.execute {
             try {
                 detector = ObjectDetectorEngine(applicationContext)
-                runOnUiThread { statusText.text = "AI準備完了 / リング位置を設定" }
+                runOnUiThread {
+                    statusText.text = "v0.4準備完了 / YOLO + FAST TRACK"
+                }
             } catch (e: Exception) {
-                runOnUiThread { statusText.text = "AI初期化失敗: ${e.message}" }
+                runOnUiThread {
+                    statusText.text = "AI初期化失敗: ${e.message}"
+                }
             }
         }
 
@@ -251,6 +284,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         findViewById<Button>(R.id.startButton).setOnClickListener {
             tracker.resetSession()
+            fastBallTracker.reset()
+            playerIdentityTracker.reset()
             debugLogger.logEvent(
                 "START_PRESSED",
                 detail = "threePointPoints=${tracker.threePointLine.size}; hoopPreset=${tracker.hoopRect != null}"
@@ -267,6 +302,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             debugLogger.logEvent("RESET_PRESSED", scoreA = game.scoreA, scoreB = game.scoreB)
             game.reset()
             tracker.resetSession()
+            fastBallTracker.reset()
+            playerIdentityTracker.reset()
             commentary.reset()
             tts?.stop()
             setControlsExpanded(true)
@@ -589,6 +626,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
+
             val preview = Preview.Builder()
                 .setTargetResolution(Size(1280, 720))
                 .build()
@@ -601,22 +639,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .build()
 
             analysis.setAnalyzer(cameraExecutor) { image ->
-                val now = SystemClock.uptimeMillis()
-                val fastTracking = game.running && tracker.needsFastBallTracking
-                val minInferenceInterval = if (fastTracking) 75L else 110L
-                if (now - lastInferenceAt < minInferenceInterval) {
-                    image.close()
-                    return@setAnalyzer
-                }
-                lastInferenceAt = now
-                val d = detector
-                if (d == null) {
-                    image.close()
-                    return@setAnalyzer
-                }
+                val frameTime = SystemClock.uptimeMillis()
+                val rotationDegrees = image.imageInfo.rotationDegrees
+
                 try {
                     val bitmap = analysisBitmap
-                        ?.takeIf { it.width == image.width && it.height == image.height && !it.isRecycled }
+                        ?.takeIf {
+                            it.width == image.width &&
+                                it.height == image.height &&
+                                !it.isRecycled
+                        }
                         ?: Bitmap.createBitmap(
                             image.width,
                             image.height,
@@ -627,49 +659,189 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
 
-                    val result = d.detect(
+                    pendingYolo.getAndSet(null)?.let { packet ->
+                        latestYoloInferenceMs = packet.result.inferenceMs
+                        latestYoloDetectionCount = packet.result.detections.size
+
+                        playerIdentityTracker.update(
+                            detections = packet.result.detections,
+                            imageWidth = packet.result.imageWidth,
+                            imageHeight = packet.result.imageHeight,
+                            nowMs = packet.receivedTimeMs
+                        )
+                        tracker.updateYoloDetections(
+                            detections = packet.result.detections,
+                            imageWidth = packet.result.imageWidth,
+                            imageHeight = packet.result.imageHeight,
+                            nowMs = packet.receivedTimeMs
+                        )
+                    }
+
+                    val fastBall = fastBallTracker.track(
                         bitmap = bitmap,
-                        rotationDegrees = image.imageInfo.rotationDegrees,
-                        hoopRect = tracker.hoopRect
+                        rotationDegrees = rotationDegrees,
+                        nowMs = frameTime
                     )
-                    val snapshot = tracker.update(
-                        result.detections,
-                        result.imageWidth,
-                        result.imageHeight,
-                        SystemClock.uptimeMillis()
+                    val players = playerIdentityTracker.snapshot(frameTime)
+                    val snapshot = tracker.updateFrame(
+                        players = players,
+                        ball = fastBall,
+                        nowMs = frameTime
                     )
-                    debugLogger.logFrame(
-                        snapshot = snapshot,
-                        inferenceMs = result.inferenceMs,
-                        detectionCount = result.detections.size,
-                        ballConfidence = result.ballConfidence,
-                        ballSource = result.ballSource,
-                        roiPasses = result.roiPasses,
-                        scoreA = game.scoreA,
-                        scoreB = game.scoreB
-                    )
-                    runOnUiThread {
-                        overlayView.setCalibration(tracker.hoopRect, tracker.threePointLine)
-                        overlayView.update(snapshot, result.imageWidth, result.imageHeight)
-                        val ballText = if (result.ballConfidence > 0f) {
-                            " | BALL %.2f %s".format(result.ballConfidence, result.ballSource)
+
+                    val normalizedRotation =
+                        ((rotationDegrees % 360) + 360) % 360
+                    val displayWidth =
+                        if (normalizedRotation == 90 || normalizedRotation == 270) {
+                            image.height
                         } else {
-                            " | BALL --"
+                            image.width
                         }
-                        perfText.text =
-                            "YOLO ${result.inferenceMs} ms | ${result.detections.size} obj$ballText"
-                        if (game.running) statusText.text = snapshot.status
+                    val displayHeight =
+                        if (normalizedRotation == 90 || normalizedRotation == 270) {
+                            image.width
+                        } else {
+                            image.height
+                        }
+
+                    if (frameTime - lastLogAt >= 100L) {
+                        lastLogAt = frameTime
+                        debugLogger.logFrame(
+                            snapshot = snapshot,
+                            inferenceMs = latestYoloInferenceMs,
+                            detectionCount = latestYoloDetectionCount,
+                            ballConfidence = fastBall?.confidence ?: 0f,
+                            ballSource = fastBall?.source ?: "NONE",
+                            roiPasses = 0,
+                            scoreA = game.scoreA,
+                            scoreB = game.scoreB
+                        )
+                    }
+
+                    if (frameTime - lastUiAt >= 50L) {
+                        lastUiAt = frameTime
+                        runOnUiThread {
+                            overlayView.setCalibration(
+                                tracker.hoopRect,
+                                tracker.threePointLine
+                            )
+                            overlayView.update(
+                                snapshot,
+                                displayWidth,
+                                displayHeight
+                            )
+
+                            val ballText = if (fastBall != null) {
+                                "BALL %.2f %s".format(
+                                    fastBall.confidence,
+                                    fastBall.source
+                                )
+                            } else {
+                                "BALL --"
+                            }
+
+                            perfText.text =
+                                "v0.4 YOLO ${latestYoloInferenceMs}ms | " +
+                                    "TRACK ${fastBall?.trackingMs ?: 0L}ms | " +
+                                    ballText
+
+                            if (game.running) {
+                                statusText.text = snapshot.status
+                            }
+                        }
+                    }
+
+                    val yoloInterval =
+                        if (game.running) 350L else 600L
+
+                    val d = detector
+                    if (
+                        d != null &&
+                        frameTime - lastYoloLaunchAt >= yoloInterval &&
+                        yoloBusy.compareAndSet(false, true)
+                    ) {
+                        lastYoloLaunchAt = frameTime
+                        val yoloBitmap =
+                            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                        val captureRotation = rotationDegrees
+                        val captureTime = frameTime
+
+                        yoloExecutor.execute {
+                            try {
+                                val result = d.detect(
+                                    bitmap = yoloBitmap,
+                                    rotationDegrees = captureRotation,
+                                    hoopRect = tracker.hoopRect
+                                )
+                                val receivedTime = SystemClock.uptimeMillis()
+
+                                val ballDetection = result.detections
+                                    .filter { it.label == "sports ball" }
+                                    .maxByOrNull { it.score }
+
+                                if (ballDetection != null) {
+                                    val norm = android.graphics.RectF(
+                                        (ballDetection.box.left / result.imageWidth)
+                                            .coerceIn(0f, 1f),
+                                        (ballDetection.box.top / result.imageHeight)
+                                            .coerceIn(0f, 1f),
+                                        (ballDetection.box.right / result.imageWidth)
+                                            .coerceIn(0f, 1f),
+                                        (ballDetection.box.bottom / result.imageHeight)
+                                            .coerceIn(0f, 1f)
+                                    )
+
+                                    fastBallTracker.anchor(
+                                        normalizedBox = norm,
+                                        bitmap = yoloBitmap,
+                                        rotationDegrees = captureRotation,
+                                        captureTimeMs = captureTime,
+                                        receivedTimeMs = receivedTime,
+                                        detectorConfidence = ballDetection.score
+                                    )
+                                }
+
+                                pendingYolo.set(
+                                    YoloPacket(
+                                        result = result,
+                                        captureTimeMs = captureTime,
+                                        receivedTimeMs = receivedTime
+                                    )
+                                )
+                            } catch (e: Exception) {
+                                debugLogger.logEvent(
+                                    "YOLO_ERROR",
+                                    detail = e.toString()
+                                )
+                            } finally {
+                                if (!yoloBitmap.isRecycled) {
+                                    yoloBitmap.recycle()
+                                }
+                                yoloBusy.set(false)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    debugLogger.logEvent("AI_ERROR", detail = e.toString())
-                    runOnUiThread { perfText.text = "AI error: ${e.javaClass.simpleName}" }
+                    debugLogger.logEvent(
+                        "TRACKING_ERROR",
+                        detail = e.toString()
+                    )
+                    runOnUiThread {
+                        perfText.text =
+                            "TRACK error: ${e.javaClass.simpleName}"
+                    }
                 } finally {
                     image.close()
                 }
             }
 
             provider.unbindAll()
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+            provider.bindToLifecycle(
+                this,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                analysis
+            )
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -697,6 +869,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
+        yoloExecutor.shutdown()
         detector?.close()
         detector = null
         mcVoicePack.release()
