@@ -19,9 +19,13 @@ class BasketballTracker(
     private var currentShotValue = 1
     private var shotStartedMs = 0L
 
+    private data class BallSample(val x: Float, val y: Float, val timeMs: Long)
+    private val ballHistory = mutableListOf<BallSample>()
+
     private enum class HoopState { WAIT_ABOVE, ARMED }
     private var hoopState = HoopState.WAIT_ABOVE
     private var armedAtMs = 0L
+    private var armedBallY = 0f
     private var lastScoreMs = 0L
 
     fun resetSession() {
@@ -31,8 +35,12 @@ class BasketballTracker(
         wasBallNearPlayer = false
         currentShotPlayer = null
         currentShotValue = 1
+        shotStartedMs = 0L
         hoopState = HoopState.WAIT_ABOVE
         armedAtMs = 0L
+        armedBallY = 0f
+        lastScoreMs = 0L
+        ballHistory.clear()
         onDebugEvent("TRACKER_RESET")
     }
 
@@ -52,6 +60,10 @@ class BasketballTracker(
         var status = if (playerA != null && playerB != null) "A/B追跡中" else "2人を認識中"
 
         if (ball != null) {
+            val bx = centerX(ball)
+            val by = centerY(ball)
+            addBallSample(bx, by, nowMs)
+
             val possessor = nearestPossessor(ball)
             val near = possessor != null
             if (near) lastPossessor = possessor
@@ -67,7 +79,8 @@ class BasketballTracker(
 
             detectHoopCrossing(ball, nowMs)
         } else {
-            if (nowMs - shotStartedMs > 2500L) currentShotPlayer = null
+            pruneBallHistory(nowMs)
+            if (nowMs - shotStartedMs > 4500L) currentShotPlayer = null
         }
 
         return snapshot(ball, status)
@@ -89,9 +102,11 @@ class BasketballTracker(
         val direct = distance(a.box, p0) + distance(b.box, p1)
         val crossed = distance(a.box, p1) + distance(b.box, p0)
         if (direct <= crossed) {
-            a.box = p0; b.box = p1
+            a.box = p0
+            b.box = p1
         } else {
-            a.box = p1; b.box = p0
+            a.box = p1
+            b.box = p0
         }
         a.lastSeenMs = nowMs
         b.lastSeenMs = nowMs
@@ -103,53 +118,118 @@ class BasketballTracker(
         val candidates = listOfNotNull(playerA, playerB)
         var best: PlayerTrack? = null
         var bestScore = Float.MAX_VALUE
+
         for (p in candidates) {
+            // 手元の小さいボールを取りこぼさないよう、人物領域を広めに見る。
             val expanded = RectF(
-                p.box.left - p.box.width() * 0.30f,
-                p.box.top - p.box.height() * 0.20f,
-                p.box.right + p.box.width() * 0.30f,
-                p.box.bottom + p.box.height() * 0.10f
+                p.box.left - p.box.width() * 0.45f,
+                p.box.top - p.box.height() * 0.25f,
+                p.box.right + p.box.width() * 0.45f,
+                p.box.bottom + p.box.height() * 0.15f
             )
             if (!expanded.contains(bx, by)) continue
+
             val d = hypot((bx - p.centerX).toDouble(), (by - p.centerY).toDouble()).toFloat()
-            if (d < bestScore) { best = p; bestScore = d }
+            if (d < bestScore) {
+                best = p
+                bestScore = d
+            }
         }
         return best?.id
+    }
+
+    private fun addBallSample(x: Float, y: Float, nowMs: Long) {
+        ballHistory += BallSample(x, y, nowMs)
+        pruneBallHistory(nowMs)
+        while (ballHistory.size > 20) ballHistory.removeAt(0)
+    }
+
+    private fun pruneBallHistory(nowMs: Long) {
+        ballHistory.removeAll { nowMs - it.timeMs > 3000L }
     }
 
     private fun detectHoopCrossing(ball: RectF, nowMs: Long) {
         val hoop = hoopRect ?: return
         val x = centerX(ball)
         val y = centerY(ball)
-        val xMargin = hoop.width() * 0.55f
-        val inLaneX = x >= hoop.left - xMargin && x <= hoop.right + xMargin
+
+        val hoopCenterY = centerY(hoop)
+        val xMargin = hoop.width() * 0.80f
+        val laneLeft = hoop.left - xMargin
+        val laneRight = hoop.right + xMargin
+        val inLaneX = x in laneLeft..laneRight
+
+        // 手動設定したリング矩形は実リングより大きめなので、
+        // 中心線を基準に「上→下」の軌道を判定する。
+        val aboveThreshold = hoopCenterY - maxOf(hoop.height() * 0.15f, 0.006f)
+        val belowThreshold = hoopCenterY + maxOf(hoop.height() * 0.22f, 0.009f)
+        val approachTop = hoop.top - maxOf(hoop.height() * 3.0f, 0.05f)
 
         when (hoopState) {
             HoopState.WAIT_ABOVE -> {
-                if (inLaneX && y < hoop.top) {
+                if (inLaneX && y <= aboveThreshold && y >= approachTop) {
                     hoopState = HoopState.ARMED
                     armedAtMs = nowMs
-                    onDebugEvent("HOOP_ARMED ballX=$x ballY=$y")
+                    armedBallY = y
+                    onDebugEvent(
+                        "HOOP_ARMED ballX=$x ballY=$y above=$aboveThreshold below=$belowThreshold"
+                    )
                 }
             }
+
             HoopState.ARMED -> {
-                if (nowMs - armedAtMs > 1600L) {
+                if (nowMs - armedAtMs > 2600L) {
                     hoopState = HoopState.WAIT_ABOVE
                     onDebugEvent("HOOP_TIMEOUT")
                     return
                 }
-                if (inLaneX && y > hoop.bottom) {
-                    val shooter = currentShotPlayer ?: lastPossessor
-                    if (shooter != null && nowMs - lastScoreMs > 1800L) {
-                        lastScoreMs = nowMs
-                        onDebugEvent("AUTO_SCORE player=$shooter points=$currentShotValue")
-                        onAutomaticScore(shooter, currentShotValue)
+
+                val minimumDrop = maxOf(hoop.height() * 0.30f, 0.012f)
+                val crossedDownward =
+                    inLaneX &&
+                        y >= belowThreshold &&
+                        y - armedBallY >= minimumDrop
+
+                if (crossedDownward) {
+                    val hadAboveSample = ballHistory.any { sample ->
+                        sample.timeMs >= armedAtMs - 250L &&
+                            sample.timeMs <= nowMs &&
+                            sample.x in laneLeft..laneRight &&
+                            sample.y <= aboveThreshold
                     }
-                    currentShotPlayer = null
-                    hoopState = HoopState.WAIT_ABOVE
+
+                    if (hadAboveSample) {
+                        registerAutomaticScore(nowMs, x, y)
+                    }
                 }
             }
         }
+    }
+
+    private fun registerAutomaticScore(nowMs: Long, ballX: Float, ballY: Float) {
+        val shooter = currentShotPlayer ?: lastPossessor
+
+        if (shooter == null) {
+            onDebugEvent("HOOP_CROSSED_NO_SHOOTER ballX=$ballX ballY=$ballY")
+            hoopState = HoopState.WAIT_ABOVE
+            return
+        }
+
+        if (nowMs - lastScoreMs <= 1200L) {
+            onDebugEvent("HOOP_CROSSED_COOLDOWN player=$shooter")
+            hoopState = HoopState.WAIT_ABOVE
+            return
+        }
+
+        lastScoreMs = nowMs
+        onDebugEvent(
+            "AUTO_SCORE player=$shooter points=$currentShotValue ballX=$ballX ballY=$ballY"
+        )
+        onAutomaticScore(shooter, currentShotValue)
+
+        currentShotPlayer = null
+        hoopState = HoopState.WAIT_ABOVE
+        ballHistory.clear()
     }
 
     private fun calculateShotValue(player: Char): Int {
@@ -166,6 +246,7 @@ class BasketballTracker(
         if (pts.size < 2) return null
         if (x <= pts.first().x) return pts.first().y
         if (x >= pts.last().x) return pts.last().y
+
         for (i in 0 until pts.lastIndex) {
             val a = pts[i]
             val b = pts[i + 1]
@@ -186,6 +267,7 @@ class BasketballTracker(
 
     private fun centerX(r: RectF) = (r.left + r.right) / 2f
     private fun centerY(r: RectF) = (r.top + r.bottom) / 2f
+
     private fun distance(a: RectF, b: RectF): Float = hypot(
         (centerX(a) - centerX(b)).toDouble(),
         (centerY(a) - centerY(b)).toDouble()
