@@ -19,8 +19,16 @@ class BasketballTracker(
     private var currentShotValue = 1
     private var shotStartedMs = 0L
 
-    private data class BallSample(val x: Float, val y: Float, val timeMs: Long)
+    private data class BallSample(
+        val x: Float,
+        val y: Float,
+        val timeMs: Long,
+        val source: String = "FULL",
+        val score: Float = 0f
+    )
     private val ballHistory = mutableListOf<BallSample>()
+    private var lastSelectedBall: RectF? = null
+    private var lastSelectedBallMs = 0L
 
     private enum class HoopState { WAIT_ABOVE, ARMED }
     private var hoopState = HoopState.WAIT_ABOVE
@@ -41,6 +49,8 @@ class BasketballTracker(
         armedBallY = 0f
         lastScoreMs = 0L
         ballHistory.clear()
+        lastSelectedBall = null
+        lastSelectedBallMs = 0L
         onDebugEvent("TRACKER_RESET")
     }
 
@@ -53,16 +63,26 @@ class BasketballTracker(
             .take(2)
         updatePlayers(people, nowMs)
 
-        val ball = detections.filter { it.label == "sports ball" }
-            .maxByOrNull { it.score }
-            ?.let { normalize(it.box, width, height) }
+        val ballDetections = detections
+            .filter { it.label == "sports ball" }
+
+        val selectedBallDetection = selectBallDetection(ballDetections, width, height, nowMs)
+        val ball = selectedBallDetection?.let { normalize(it.box, width, height) }
 
         var status = if (playerA != null && playerB != null) "A/B追跡中" else "2人を認識中"
 
         if (ball != null) {
             val bx = centerX(ball)
             val by = centerY(ball)
-            addBallSample(bx, by, nowMs)
+            addBallSample(
+                bx,
+                by,
+                nowMs,
+                selectedBallDetection?.source ?: "FULL",
+                selectedBallDetection?.score ?: 0f
+            )
+            lastSelectedBall = ball
+            lastSelectedBallMs = nowMs
 
             val possessor = nearestPossessor(ball)
             val near = possessor != null
@@ -80,10 +100,74 @@ class BasketballTracker(
             detectHoopCrossing(ball, nowMs)
         } else {
             pruneBallHistory(nowMs)
+            if (nowMs - lastSelectedBallMs > 900L) lastSelectedBall = null
             if (nowMs - shotStartedMs > 4500L) currentShotPlayer = null
         }
 
         return snapshot(ball, status)
+    }
+
+    private fun selectBallDetection(
+        detections: List<AiDetection>,
+        width: Int,
+        height: Int,
+        nowMs: Long
+    ): AiDetection? {
+        if (detections.isEmpty()) return null
+
+        val hoop = hoopRect
+        if (hoop != null) {
+            val scoringCandidates = detections.filter { det ->
+                val box = normalize(det.box, width, height)
+                val x = centerX(box)
+                val y = centerY(box)
+                val w = hoop.width()
+                val h = hoop.height()
+                x >= hoop.left - w * 1.25f &&
+                    x <= hoop.right + w * 1.25f &&
+                    y >= hoop.top - h * 4.5f &&
+                    y <= hoop.bottom + h * 5.5f
+            }
+
+            if (scoringCandidates.isNotEmpty()) {
+                val hcX = centerX(hoop)
+                val hcY = centerY(hoop)
+                return scoringCandidates.maxByOrNull { det ->
+                    val box = normalize(det.box, width, height)
+                    val dist = hypot(
+                        (centerX(box) - hcX).toDouble(),
+                        (centerY(box) - hcY).toDouble()
+                    ).toFloat()
+                    val sourceBonus = if (det.source == "HOOP_ROI") 0.45f else 0f
+                    sourceBonus + det.score + (0.25f - dist).coerceAtLeast(0f)
+                }
+            }
+        }
+
+        val previous = lastSelectedBall
+        if (previous != null && nowMs - lastSelectedBallMs <= 800L) {
+            val px = centerX(previous)
+            val py = centerY(previous)
+            val continuity = detections.map { det ->
+                val box = normalize(det.box, width, height)
+                val d = hypot(
+                    (centerX(box) - px).toDouble(),
+                    (centerY(box) - py).toDouble()
+                ).toFloat()
+                det to d
+            }.filter { it.second <= 0.32f }
+
+            if (continuity.isNotEmpty()) {
+                return continuity.minByOrNull { pair ->
+                    val sourceBonus = if (pair.first.source == "HOOP_ROI") -0.04f else 0f
+                    pair.second + sourceBonus - pair.first.score * 0.12f
+                }?.first
+            }
+        }
+
+        return detections.maxByOrNull { det ->
+            det.score + if (det.source == "HOOP_ROI") 0.08f else 0f
+        }
     }
 
     private fun updatePlayers(people: List<RectF>, nowMs: Long) {
