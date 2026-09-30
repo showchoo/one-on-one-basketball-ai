@@ -65,7 +65,7 @@ class FastBallTracker(
         private const val MAX_YOLO_AGE_MS = 1500L
         private const val TEMPLATE_GRID = 9
         private const val MIN_MATCH = 0.43f
-        private const val MIN_MARGIN = 0.035f
+        private const val MIN_MARGIN = 0.003f
     }
 
     @Synchronized
@@ -273,7 +273,7 @@ class FastBallTracker(
             val accepted =
                 match != null &&
                     match.score >= 0.40f &&
-                    match.score - match.secondScore >= 0.025f
+                    match.score - match.secondScore >= 0.002f
 
             if (accepted && match != null) {
                 val oldX = centerX(currentBox)
@@ -323,17 +323,27 @@ class FastBallTracker(
             }
         }
 
+        if (replayFrames.size >= 2 && replayed == 0) {
+            onDebugEvent(
+                "FAST_ANCHOR_REJECT replay_failed conf=$detectorConfidence latency=" +
+                    (receivedTimeMs - captureTimeMs) +
+                    " buffered=" + replayFrames.size
+            )
+            return
+        }
+
         boxNorm = currentBox
         template = currentTemplate
         vx = localVx
         vy = localVy
-        lastUpdateMs = max(currentTime, receivedTimeMs)
+        lastUpdateMs = currentTime
         lastYoloReceivedMs = receivedTimeMs
         misses = 0
 
         onDebugEvent(
             "FAST_ANCHOR_REPLAY conf=$detectorConfidence latency=" +
                 (receivedTimeMs - captureTimeMs) +
+                " buffered=" + replayFrames.size +
                 " replayed=$replayed failed=$failed x=" +
                 centerX(currentBox) + " y=" + centerY(currentBox)
         )
