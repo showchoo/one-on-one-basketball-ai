@@ -18,8 +18,8 @@ class ObjectDetectorEngine(context: Context) {
             .build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptions)
-            .setScoreThreshold(0.30f)
-            .setMaxResults(8)
+            .setScoreThreshold(0.15f)
+            .setMaxResults(12)
             .build()
         detector = ObjectDetector.createFromFileAndOptions(
             context,
@@ -46,7 +46,12 @@ class ObjectDetectorEngine(context: Context) {
         val detections = raw.mapNotNull { det ->
             val category = det.categories.maxByOrNull { it.score } ?: return@mapNotNull null
             val label = category.label.lowercase()
-            if (label != "person" && label != "sports ball") return@mapNotNull null
+            val minScore = when (label) {
+                "person" -> 0.30f
+                "sports ball" -> 0.15f
+                else -> return@mapNotNull null
+            }
+            if (category.score < minScore) return@mapNotNull null
             AiDetection(label, category.score, det.boundingBox)
         }
         return Result(
