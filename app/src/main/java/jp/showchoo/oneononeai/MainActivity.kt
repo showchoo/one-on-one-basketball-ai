@@ -996,13 +996,43 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             "%.4f|%.4f".format(Locale.US, cx, cy)
                         } ?: "-"
 
+                        // Always visualize the strongest temporal heatmap peak,
+                        // even when it is below the official 0.5 detection
+                        // threshold. This distinguishes "model sees the ball
+                        // weakly" from "model is looking at the wrong object".
+                        val peakX = packet.result.rawPeakX.coerceIn(0f, 1f)
+                        val peakY = packet.result.rawPeakY.coerceIn(0f, 1f)
+                        val peakHalfW = 0.012f
+                        val peakHalfH = 0.020f
+                        latestRawBallCandidates = listOf(
+                            OverlayView.RawBallCandidate(
+                                box = RectF(
+                                    (peakX - peakHalfW).coerceIn(0f, 1f),
+                                    (peakY - peakHalfH).coerceIn(0f, 1f),
+                                    (peakX + peakHalfW).coerceIn(0f, 1f),
+                                    (peakY + peakHalfH).coerceIn(0f, 1f)
+                                ),
+                                score = packet.result.rawPeakProbability,
+                                reason = if (det != null) "WASB_PASS" else "WASB_PEAK"
+                            )
+                        )
+                        latestRawBallCandidatesAt = packet.receivedTimeMs
+
                         debugLogger.logEvent(
                             "TEMPORAL_BALL_RESULT",
                             detail =
                                 "detected=" + (det != null) +
                                     "; score=" + (det?.score ?: 0f) +
                                     "; inferenceMs=" + packet.result.inferenceMs +
+                                    "; backend=" + packet.result.backend +
                                     "; maxHeat=" + packet.result.maxHeat +
+                                    "; rawPeak=" + packet.result.rawPeakProbability +
+                                    "; rawPeakXY=" +
+                                    "%.4f|%.4f".format(
+                                        Locale.US,
+                                        packet.result.rawPeakX,
+                                        packet.result.rawPeakY
+                                    ) +
                                     "; blobPixels=" + packet.result.blobPixels +
                                     "; center=" + center +
                                     "; latencyMs=" +
@@ -1180,7 +1210,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.7.0 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.1 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
