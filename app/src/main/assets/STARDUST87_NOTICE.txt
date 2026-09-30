@@ -1,0 +1,13 @@
+Dedicated basketball detector model attribution
+
+Model weights:
+- Repository: Stardust87/basketball-detection
+- File: models/yolov5s_basketball.pt
+- Authors: Michal Szachniewicz and Anna Klimiuk
+- License: MIT License
+- Purpose in this app: basketball-only ROI detection
+
+The original repository states that the YOLO model was trained on a custom
+dataset of privately recorded basketball videos.
+
+MIT License attribution is preserved for the reused model weights.
