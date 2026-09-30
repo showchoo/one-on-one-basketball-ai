@@ -12,6 +12,11 @@ import android.view.View
 import kotlin.math.min
 
 class OverlayView(context: Context, attrs: AttributeSet?) : View(context, attrs) {
+    data class RawBallCandidate(
+        val box: RectF,
+        val score: Float,
+        val reason: String
+    )
     private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 5f
@@ -34,12 +39,23 @@ class OverlayView(context: Context, attrs: AttributeSet?) : View(context, attrs)
         color = Color.CYAN
         style = Paint.Style.FILL
     }
+    private val rawBallPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.RED
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    }
+    private val rawBallTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.RED
+        textSize = 22f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
 
     private var snapshot: TrackerSnapshot? = null
     private var imageWidth = 16
     private var imageHeight = 9
     private var hoopRectNorm: RectF? = null
     private var threePointNorm: List<PointF> = emptyList()
+    private var rawBallCandidates: List<RawBallCandidate> = emptyList()
 
     private enum class CalibrationMode { NONE, HOOP, THREE }
     private var calibrationMode = CalibrationMode.NONE
@@ -47,10 +63,18 @@ class OverlayView(context: Context, attrs: AttributeSet?) : View(context, attrs)
     private var onHoopCalibrated: ((RectF) -> Unit)? = null
     private var onThreeCalibrated: ((List<PointF>) -> Unit)? = null
 
-    fun update(snapshot: TrackerSnapshot, imageWidth: Int, imageHeight: Int) {
+    fun update(
+        snapshot: TrackerSnapshot,
+        imageWidth: Int,
+        imageHeight: Int,
+        rawBallCandidates: List<RawBallCandidate> = emptyList()
+    ) {
         this.snapshot = snapshot
         this.imageWidth = imageWidth.coerceAtLeast(1)
         this.imageHeight = imageHeight.coerceAtLeast(1)
+        this.rawBallCandidates = rawBallCandidates.map {
+            it.copy(box = RectF(it.box))
+        }
         invalidate()
     }
 
@@ -112,6 +136,18 @@ class OverlayView(context: Context, attrs: AttributeSet?) : View(context, attrs)
         hoopRectNorm?.let { canvas.drawRect(toView(it), hoopPaint) }
         drawThreePoint(canvas, threePointNorm)
         if (pendingThree.isNotEmpty()) drawThreePoint(canvas, pendingThree)
+
+        rawBallCandidates.forEach { candidate ->
+            val r = toView(candidate.box)
+            canvas.drawOval(r, rawBallPaint)
+            val label = "RAW %.2f %s".format(candidate.score, candidate.reason)
+            canvas.drawText(
+                label,
+                r.left,
+                (r.top - 5f).coerceAtLeast(24f),
+                rawBallTextPaint
+            )
+        }
 
         snapshot?.let { s ->
             s.playerA?.let {
