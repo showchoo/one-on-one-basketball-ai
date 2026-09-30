@@ -29,12 +29,6 @@ jobs:
           base64 --decode ci/stable-debug.keystore.b64 > ci/stable-debug.keystore
           chmod 600 ci/stable-debug.keystore
 
-      - name: Install street MC voice pack
-        run: |
-          mkdir -p app/src/main/res/raw
-          base64 --decode ci/mc_voice_pack.zip.b64 > /tmp/mc_voice_pack.zip
-          unzip -o /tmp/mc_voice_pack.zip -d app/src/main/res/raw
-
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
