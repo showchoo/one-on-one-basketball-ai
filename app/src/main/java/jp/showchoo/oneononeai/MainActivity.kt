@@ -1012,7 +1012,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.6.1 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.6.2 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
