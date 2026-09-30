@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.os.Bundle
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
@@ -628,6 +629,43 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
 
+    private fun validateBallDetectionsForSearch(
+        detections: List<AiDetection>,
+        roi: RectF,
+        reason: String
+    ): List<AiDetection> {
+        if (detections.isEmpty()) return emptyList()
+
+        val roiCx = (roi.left + roi.right) / 2f
+        val roiCy = (roi.top + roi.bottom) / 2f
+
+        return detections.filter { detection ->
+            val box = detection.box
+            val w = box.width().coerceAtLeast(0.0001f)
+            val h = box.height().coerceAtLeast(0.0001f)
+            val aspect = w / h
+
+            // A projected basketball should remain approximately round.
+            // Keep this relaxed enough for imperfect detector boxes.
+            val shapeOk = aspect in 0.50f..1.90f
+            if (!shapeOk) {
+                false
+            } else if (reason.startsWith("MOTION")) {
+                // MotionBallProposer centers the ROI on the moving blob in the
+                // exact same capture frame. A basketball detection far from that
+                // center is almost certainly an unrelated YOLO false positive.
+                val cx = (box.left + box.right) / 2f
+                val cy = (box.top + box.bottom) / 2f
+                val dx = kotlin.math.abs(cx - roiCx)
+                val dy = kotlin.math.abs(cy - roiCy)
+                dx <= roi.width() * 0.30f &&
+                    dy <= roi.height() * 0.30f
+            } else {
+                true
+            }
+        }
+    }
+
     private fun addManualScore(player: Char, points: Int) {
         debugLogger.logEvent(
             eventType = "MANUAL_SCORE_REQUEST",
@@ -754,25 +792,49 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 "BALL_ROI_YOLO"
                             }
 
+                        val rawDetections = packet.result.detections
+                        val validatedDetections = validateBallDetectionsForSearch(
+                            detections = rawDetections,
+                            roi = packet.result.roi,
+                            reason = packet.reason
+                        )
+
                         val accepted = ballFusion.observe(
-                            detections = packet.result.detections,
+                            detections = validatedDetections,
                             captureTimeMs = packet.captureTimeMs,
                             receivedTimeMs = packet.receivedTimeMs,
                             source = fusionSource
                         )
 
+                        val rawSummary = rawDetections
+                            .take(5)
+                            .joinToString(",") {
+                                val cx = (it.box.left + it.box.right) / 2f
+                                val cy = (it.box.top + it.box.bottom) / 2f
+                                "%.3f@%.3f|%.3f|%.3f|%.3f".format(
+                                    Locale.US,
+                                    it.score,
+                                    cx,
+                                    cy,
+                                    it.box.width(),
+                                    it.box.height()
+                                )
+                            }
+
                         debugLogger.logEvent(
                             "BALL_ROI_RESULT",
                             detail =
                                 "accepted=" + accepted +
-                                    "; candidates=" + packet.result.detections.size +
+                                    "; rawCandidates=" + rawDetections.size +
+                                    "; candidates=" + validatedDetections.size +
                                     "; inferenceMs=" + packet.result.inferenceMs +
                                     "; reason=" + packet.reason +
                                     "; motionCount=" + packet.motionCount +
                                     "; roi=" + packet.result.roi.left + "|" +
                                     packet.result.roi.top + "|" +
                                     packet.result.roi.right + "|" +
-                                    packet.result.roi.bottom
+                                    packet.result.roi.bottom +
+                                    "; raw=" + rawSummary
                         )
                     }
 
@@ -836,7 +898,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.5.2 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.5.3 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     ballText
