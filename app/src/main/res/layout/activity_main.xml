@@ -240,10 +240,18 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/voiceSettingsButton"
                         style="@style/Widget.OneOnOneAI.Button.Secondary"
-                        android:layout_width="104dp"
+                        android:layout_width="94dp"
                         android:layout_height="42dp"
                         android:layout_marginStart="6dp"
                         android:text="音声" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/mcVoicePackButton"
+                        style="@style/Widget.OneOnOneAI.Button.Secondary"
+                        android:layout_width="104dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="6dp"
+                        android:text="MC音声" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/debugLogButton"
