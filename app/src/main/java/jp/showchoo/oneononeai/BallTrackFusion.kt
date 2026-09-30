@@ -49,8 +49,10 @@ class BallTrackFusion(
     private var unlockedSearchCount = 0
 
     companion object {
-        private const val PREDICT_VISIBLE_MS = 360L
-        private const val TRACK_EXPIRE_MS = 650L
+        // arrows We2 needs roughly 300ms per ROI inference. Keep the confirmed
+        // prediction visible long enough to bridge one slow inference cycle.
+        private const val PREDICT_VISIBLE_MS = 700L
+        private const val TRACK_EXPIRE_MS = 1300L
     }
 
     @Synchronized
@@ -163,13 +165,25 @@ class BallTrackFusion(
                 p.hits += 1
                 p.source = source
 
-                if (p.hits >= 3 && p.lastTimeMs - p.firstTimeMs <= 1400L) {
+                val hypothesisAgeMs = p.lastTimeMs - p.firstTimeMs
+                val strongTwoHit =
+                    p.hits >= 2 &&
+                        hypothesisAgeMs <= 900L &&
+                        p.score >= 0.55f &&
+                        chosen.score >= 0.45f
+                val normalThreeHit =
+                    p.hits >= 3 &&
+                        hypothesisAgeMs <= 1400L
+
+                if (strongTwoHit || normalThreeHit) {
                     acquire(chosen.box, p.score, captureTimeMs, receivedTimeMs, source)
                     pending.clear()
                     onDebugEvent(
-                        "BALL_ACQUIRE_3_HIT score=" + p.score +
+                        "BALL_ACQUIRE_" +
+                            (if (strongTwoHit) "2_HIT_STRONG" else "3_HIT") +
+                            " score=" + p.score +
                             " source=" + source +
-                            " ageMs=" + (p.lastTimeMs - p.firstTimeMs) +
+                            " ageMs=" + hypothesisAgeMs +
                             " d=" + match.third
                     )
                     return true
@@ -399,7 +413,10 @@ class BallTrackFusion(
 
         confirmedBox = smoothed
         lastVerifiedMs = receivedTimeMs
-        lastUpdateMs = receivedTimeMs
+        // Kinematics must stay in capture-time coordinates. Using inference
+        // completion time here makes the next captured frame appear to arrive
+        // only ~20ms later on slower phones, producing a huge false velocity.
+        lastUpdateMs = captureTimeMs
         lastScore = score
         lastSource = source
         pending.clear()
