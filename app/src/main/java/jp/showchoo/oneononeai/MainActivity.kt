@@ -58,6 +58,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val receivedTimeMs: Long
     )
 
+    private data class TemporalPacket(
+        val result: TemporalBallDetectorEngine.Result,
+        val receivedTimeMs: Long
+    )
+
     private data class BallPacket(
         val result: BallRoiDetectorEngine.Result,
         val captureTimeMs: Long,
@@ -82,6 +87,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var ballExecutor: ExecutorService
     @Volatile private var detector: ObjectDetectorEngine? = null
     @Volatile private var ballDetector: BallRoiDetectorEngine? = null
+    @Volatile private var temporalBallDetector: TemporalBallDetectorEngine? = null
     private var analysisBitmap: Bitmap? = null
 
     private lateinit var ballFusion: BallTrackFusion
@@ -93,6 +99,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val ballBusy = AtomicBoolean(false)
     private val pendingYolo = AtomicReference<YoloPacket?>(null)
     private val pendingBall = AtomicReference<BallPacket?>(null)
+    private val pendingTemporal = AtomicReference<TemporalPacket?>(null)
     private var lastYoloLaunchAt = 0L
     private var lastBallLaunchAt = 0L
     private var lastLogAt = 0L
@@ -100,6 +107,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var latestYoloInferenceMs = 0L
     private var latestBallInferenceMs = 0L
     private var latestYoloDetectionCount = 0
+    private var latestTemporalResult: TemporalBallDetectorEngine.Result? = null
+    private var latestTemporalReceivedAt = 0L
     private var latestRawBallCandidates: List<OverlayView.RawBallCandidate> = emptyList()
     private var latestRawBallCandidatesAt = 0L
 
@@ -270,13 +279,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         ballExecutor.execute {
             try {
-                ballDetector = BallRoiDetectorEngine(applicationContext)
+                temporalBallDetector = TemporalBallDetectorEngine(applicationContext)
                 runOnUiThread {
-                    statusText.text = "v0.5 BALL ROI AI 準備完了"
+                    statusText.text = "v0.7 TEMPORAL BALL AI 準備完了"
                 }
             } catch (e: Exception) {
+                debugLogger.logEvent("TEMPORAL_BALL_INIT_ERROR", detail = e.toString())
                 runOnUiThread {
-                    statusText.text = "Ball AI初期化失敗: ${e.message}"
+                    statusText.text = "Temporal Ball AI初期化失敗: ${e.message}"
                 }
             }
         }
@@ -353,6 +363,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             playerIdentityTracker.reset()
             latestRawBallCandidates = emptyList()
             latestRawBallCandidatesAt = 0L
+            latestTemporalResult = null
+            latestTemporalReceivedAt = 0L
+            temporalBallDetector?.resetFrames()
             debugLogger.logEvent(
                 "START_PRESSED",
                 detail = "threePointPoints=${tracker.threePointLine.size}; hoopPreset=${tracker.hoopRect != null}"
@@ -890,6 +903,37 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
 
+                    // v0.7: keep a dense three-frame temporal window even when
+                    // the previous inference is still running.
+                    val temporal = temporalBallDetector
+                    val temporalFrameCount =
+                        temporal?.offerFrame(bitmap, rotationDegrees, frameTime) ?: 0
+                    if (
+                        temporal != null &&
+                        temporalFrameCount >= 3 &&
+                        ballBusy.compareAndSet(false, true)
+                    ) {
+                        ballExecutor.execute {
+                            try {
+                                temporal.detectLatest()?.let { result ->
+                                    pendingTemporal.set(
+                                        TemporalPacket(
+                                            result = result,
+                                            receivedTimeMs = SystemClock.uptimeMillis()
+                                        )
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                debugLogger.logEvent(
+                                    "TEMPORAL_BALL_ERROR",
+                                    detail = e.toString()
+                                )
+                            } finally {
+                                ballBusy.set(false)
+                            }
+                        }
+                    }
+
                     pendingYolo.getAndSet(null)?.let { packet ->
                         latestYoloInferenceMs = packet.result.inferenceMs
                         latestYoloDetectionCount = packet.result.detections.size
@@ -940,7 +984,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         }
                     }
 
-                    pendingBall.getAndSet(null)?.let { packet ->
+                    pendingTemporal.getAndSet(null)?.let { packet ->
+                        latestBallInferenceMs = packet.result.inferenceMs
+                        latestTemporalResult = packet.result
+                        latestTemporalReceivedAt = packet.receivedTimeMs
+
+                        val det = packet.result.detection
+                        val center = det?.box?.let {
+                            val cx = (it.left + it.right) / 2f
+                            val cy = (it.top + it.bottom) / 2f
+                            "%.4f|%.4f".format(Locale.US, cx, cy)
+                        } ?: "-"
+
+                        debugLogger.logEvent(
+                            "TEMPORAL_BALL_RESULT",
+                            detail =
+                                "detected=" + (det != null) +
+                                    "; score=" + (det?.score ?: 0f) +
+                                    "; inferenceMs=" + packet.result.inferenceMs +
+                                    "; maxHeat=" + packet.result.maxHeat +
+                                    "; blobPixels=" + packet.result.blobPixels +
+                                    "; center=" + center +
+                                    "; latencyMs=" +
+                                    (packet.receivedTimeMs - packet.result.captureTimeMs)
+                        )
+                    }
+
+                                        pendingBall.getAndSet(null)?.let { packet ->
                         latestBallInferenceMs = packet.result.inferenceMs
                         val fusionSource =
                             if (packet.reason.startsWith("MOTION")) {
@@ -1011,7 +1081,34 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     }
 
                     val players = playerIdentityTracker.snapshot(frameTime)
-                    val fusedBall = ballFusion.predict(frameTime)
+                    val temporalResult = latestTemporalResult
+                    val temporalAgeMs =
+                        if (latestTemporalReceivedAt > 0L) {
+                            frameTime - latestTemporalReceivedAt
+                        } else {
+                            Long.MAX_VALUE
+                        }
+                    val fusedBall =
+                        temporalResult
+                            ?.detection
+                            ?.takeIf { temporalAgeMs in 0L..900L }
+                            ?.let { detection ->
+                                val decay =
+                                    (1f - temporalAgeMs.toFloat() / 1400f)
+                                        .coerceIn(0.35f, 1f)
+                                BallTrackFusion.Result(
+                                    box = RectF(detection.box),
+                                    confidence = detection.score * decay,
+                                    source =
+                                        if (temporalAgeMs <= 120L) {
+                                            "TRACKNET_V2"
+                                        } else {
+                                            "TRACKNET_HOLD"
+                                        },
+                                    trackingMs = 0L,
+                                    ageSinceVerifiedMs = temporalAgeMs
+                                )
+                            }
                     ballContextTracker.update(
                         players = players,
                         ball = fusedBall,
@@ -1083,7 +1180,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.6.6 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.0 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
@@ -1096,7 +1193,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     }
 
                     val ballInterval = if (game.running) 80L else 180L
-                    val bd = ballDetector
+                    val bd = null as BallRoiDetectorEngine?
                     if (
                         bd != null &&
                         frameTime - lastBallLaunchAt >= ballInterval &&
@@ -1251,6 +1348,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         detector = null
         ballDetector?.close()
         ballDetector = null
+        temporalBallDetector?.close()
+        temporalBallDetector = null
         mcVoicePack.release()
         analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
         analysisBitmap = null
