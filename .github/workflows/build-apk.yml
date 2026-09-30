@@ -96,11 +96,16 @@ jobs:
           pt = work / "yolov5s_basketball.pt"
           url = (
               "https://raw.githubusercontent.com/Stardust87/"
-              "basketball-detection/main/models/yolov5s_basketball.pt"
+              "basketball-detection/b87b13510f782738f51a926d84d502d0db627f0d/"
+              "models/yolov5s_basketball.pt"
           )
           urlretrieve(url, pt)
           print("Downloaded dedicated basketball model:", pt, pt.stat().st_size)
           PY
+          test "$(git hash-object .model-build/yolov5s_basketball.pt)" = \
+            "ec6d755d65c59cf94e7218b10a8228e666ad3eef"
+          sed -i "s/torch.load(attempt_download(w), map_location='cpu')/torch.load(attempt_download(w), map_location='cpu', weights_only=False)/" \
+            .model-build/yolov5/models/experimental.py
           python3 .model-build/yolov5/export.py \
             --weights .model-build/yolov5s_basketball.pt \
             --imgsz 320 320 \
