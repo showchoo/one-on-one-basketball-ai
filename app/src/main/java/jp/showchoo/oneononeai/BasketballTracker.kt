@@ -266,6 +266,23 @@ class BasketballTracker(
         val belowThreshold = hoopCenterY + maxOf(hoop.height() * 0.18f, 0.008f)
         val approachTop = hoop.top - maxOf(hoop.height() * 4.0f, 0.065f)
 
+        if (hoopState == HoopState.WAIT_ABOVE && inferDirectRimCrossing(hoop, nowMs)) {
+            if (currentShotPlayer == null && lastPossessor == null) {
+                val fallback = closestPlayerToBall(x, y)
+                if (fallback != null) {
+                    currentShotPlayer = fallback
+                    currentShotValue = calculateShotValue(fallback)
+                    shotStartedMs = nowMs
+                    onDebugEvent(
+                        "SHOOTER_FALLBACK player=$fallback value=$currentShotValue ballX=$x ballY=$y"
+                    )
+                }
+            }
+            onDebugEvent("HOOP_CROSS_INFERRED ballX=$x ballY=$y")
+            registerAutomaticScore(nowMs, x, y)
+            return
+        }
+
         when (hoopState) {
             HoopState.WAIT_ABOVE -> {
                 if (inLaneX && y <= aboveThreshold && y >= approachTop) {
@@ -317,6 +334,38 @@ class BasketballTracker(
                 }
             }
         }
+    }
+
+    private fun inferDirectRimCrossing(hoop: RectF, nowMs: Long): Boolean {
+        if (ballHistory.size < 2) return false
+        val current = ballHistory.last()
+        val previous = ballHistory[ballHistory.lastIndex - 1]
+        val dt = current.timeMs - previous.timeMs
+        if (dt !in 1L..500L) return false
+
+        val hoopCenterY = centerY(hoop)
+        val belowThreshold = hoopCenterY + maxOf(hoop.height() * 0.18f, 0.008f)
+        if (previous.y >= hoopCenterY || current.y < belowThreshold) return false
+        if (current.y <= previous.y) return false
+
+        if (previous.source != "HOOP_ROI" && current.source != "HOOP_ROI") return false
+
+        val dy = current.y - previous.y
+        if (dy <= 0.0001f) return false
+        val t = ((hoopCenterY - previous.y) / dy).coerceIn(0f, 1f)
+        val crossingX = previous.x + (current.x - previous.x) * t
+        val tightMargin = hoop.width() * 0.35f
+
+        val crossesMouth =
+            crossingX >= hoop.left - tightMargin &&
+                crossingX <= hoop.right + tightMargin
+
+        if (crossesMouth) {
+            onDebugEvent(
+                "RIM_SEGMENT prev=${previous.x}|${previous.y} current=${current.x}|${current.y} crossingX=$crossingX dt=$dt"
+            )
+        }
+        return crossesMouth
     }
 
     private fun registerAutomaticScore(nowMs: Long, ballX: Float, ballY: Float) {
