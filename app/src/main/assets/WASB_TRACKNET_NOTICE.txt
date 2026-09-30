@@ -1,0 +1,14 @@
+TrackNetV2 / WASB-SBDT attribution
+
+This application uses the basketball TrackNetV2 pretrained weights and model
+implementation distributed by the WASB-SBDT project:
+
+Repository: nttcom/WASB-SBDT
+Pinned revision: 923462cacdeb3353b84ddebdedb3f4b7a8553b0f
+Project: Widely Applicable Strong Baseline for Sports Ball Detection and Tracking
+Authors: Shuhei Tarashima, Muhammad Abdul Haq, Yushan Wang, Norio Tagawa
+License: MIT License
+
+TrackNetV2 is evaluated by the WASB-SBDT project as a three-frame sports-ball
+detection/tracking model. The basketball checkpoint is converted to ONNX during
+the Android build.
