@@ -21,9 +21,6 @@ class McVoicePack(private val context: Context) {
 
     init {
         reload()
-        if (clips.isEmpty()) {
-            installBundledPack()
-        }
     }
 
     val name: String
@@ -135,14 +132,6 @@ class McVoicePack(private val context: Context) {
             if (play(key)) return true
         }
         return false
-    }
-
-    private fun installBundledPack() {
-        runCatching {
-            context.assets.open("mc_voice_pack.zip").use { input ->
-                installFromZipStream(input)
-            }
-        }
     }
 
     private fun installFromZipStream(input: InputStream) {
