@@ -82,34 +82,30 @@ jobs:
           export_and_copy(640, "basketball_yolov8n.onnx")
           PY
 
-      - name: Export TrackNetV2 basketball temporal model to ONNX
+      - name: Export WASB basketball temporal model to ONNX
         run: |
-          python3 -m pip install gdown onnx onnxscript
+          python3 -m pip install gdown onnx onnxscript omegaconf
           git clone --filter=blob:none --no-checkout https://github.com/nttcom/WASB-SBDT.git .model-build/wasb-sbdt
           git -C .model-build/wasb-sbdt fetch --depth 1 origin 923462cacdeb3353b84ddebdedb3f4b7a8553b0f
           git -C .model-build/wasb-sbdt checkout FETCH_HEAD
-          gdown 1n-R_T0QyENsArYV8Qn8TneEroQkmYbT6 -O .model-build/tracknetv2_basketball_best.pth.tar
+          gdown 1nfECuSyJvPUmz3njZCdFERSQQbERt8FU -O .model-build/wasb_basketball_best.pth.tar
           python3 - <<'PY'
           import sys
           from pathlib import Path
           import torch
           import onnx
+          from omegaconf import OmegaConf
 
           root = Path(".model-build/wasb-sbdt")
           sys.path.insert(0, str(root / "src"))
 
-          from models.unet2d import TrackNetV2
+          from models.hrnet import HRNet
 
-          weights = Path(".model-build/tracknetv2_basketball_best.pth.tar")
+          cfg = OmegaConf.load(root / "src/configs/model/wasb.yaml")
+          weights = Path(".model-build/wasb_basketball_best.pth.tar")
           ckpt = torch.load(weights, map_location="cpu", weights_only=False)
 
-          model = TrackNetV2(
-              n_channels=9,
-              n_classes=3,
-              bilinear=True,
-              mode="nearest",
-              halve_channel=False,
-          )
+          model = HRNet(cfg)
           model.load_state_dict(ckpt["model_state_dict"])
           model.eval()
 
@@ -125,11 +121,13 @@ jobs:
 
           assets = Path("app/src/main/assets")
           assets.mkdir(parents=True, exist_ok=True)
-          out = assets / "tracknetv2_basketball_3f.onnx"
+          out = assets / "wasb_basketball_3f.onnx"
 
           with torch.no_grad():
               y = wrapper(dummy)
-          print("TrackNetV2 test output:", tuple(y.shape))
+          params = sum(p.numel() for p in model.parameters())
+          print("WASB params:", params)
+          print("WASB test output:", tuple(y.shape))
 
           torch.onnx.export(
               wrapper,
@@ -143,9 +141,9 @@ jobs:
           )
           m = onnx.load(out)
           onnx.checker.check_model(m)
-          print("Installed temporal model:", out, out.stat().st_size, "bytes")
+          print("Installed WASB temporal model:", out, out.stat().st_size, "bytes")
           PY
-          ls -lh app/src/main/assets/tracknetv2_basketball_3f.onnx
+          ls -lh app/src/main/assets/wasb_basketball_3f.onnx
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
@@ -153,6 +151,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: one-on-one-ai-v0.7.0-apk
+          name: one-on-one-ai-v0.7.1-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
