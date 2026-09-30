@@ -71,40 +71,61 @@ class ObjectDetectorEngine(context: Context) {
         val merged = full.detections.toMutableList()
         var bestBallScore = full.bestBallScore
         var bestBallSource = full.bestBallSource
-        var acceptedBall = merged.any { it.label == "sports ball" }
         var roiPasses = 0
 
-        if (!acceptedBall) {
-            val roiRects = mutableListOf<Pair<String, RectF>>()
-
-            if (hoopRect != null) {
-                val hoopPx = RectF(
-                    hoopRect.left * imageWidth,
-                    hoopRect.top * imageHeight,
-                    hoopRect.right * imageWidth,
-                    hoopRect.bottom * imageHeight
-                )
-                roiRects += "HOOP_ROI" to expandedHoopRoi(hoopPx, imageWidth, imageHeight)
+        // Always run the hoop crop when calibration exists. A false positive
+        // elsewhere in the full frame must not suppress the most important
+        // scoring-region pass.
+        var hoopBallFound = false
+        if (hoopRect != null) {
+            val hoopPx = RectF(
+                hoopRect.left * imageWidth,
+                hoopRect.top * imageHeight,
+                hoopRect.right * imageWidth,
+                hoopRect.bottom * imageHeight
+            )
+            val hoopCropRect = expandedHoopRoi(hoopPx, imageWidth, imageHeight)
+            val crop = cropBitmap(rotatedBitmap, hoopCropRect)
+            if (crop != null) {
+                try {
+                    roiPasses += 1
+                    val pass = runPass(
+                        bitmap = crop,
+                        offsetX = hoopCropRect.left,
+                        offsetY = hoopCropRect.top,
+                        source = "HOOP_ROI",
+                        includePeople = false,
+                        ballThreshold = 0.05f
+                    )
+                    if (pass.bestBallScore > bestBallScore) {
+                        bestBallScore = pass.bestBallScore
+                        bestBallSource = pass.bestBallSource
+                    }
+                    val balls = pass.detections.filter { it.label == "sports ball" }
+                    if (balls.isNotEmpty()) {
+                        merged += balls
+                        hoopBallFound = true
+                    }
+                } finally {
+                    if (!crop.isRecycled) crop.recycle()
+                }
             }
+        }
 
+        // Player crops are a fallback for dribbling / release frames.
+        val fullBallFound = full.detections.any { it.label == "sports ball" }
+        if (!hoopBallFound && !fullBallFound) {
             val people = full.detections
                 .filter { it.label == "person" }
                 .sortedByDescending { it.score }
                 .take(2)
 
-            people.forEachIndexed { index, person ->
-                roiRects += ("PLAYER_ROI_" + (index + 1)) to expandedPlayerRoi(
-                    person.box,
-                    imageWidth,
-                    imageHeight
-                )
-            }
-
-            for ((source, roi) in roiRects) {
-                if (acceptedBall) break
+            for ((index, person) in people.withIndex()) {
+                val roi = expandedPlayerRoi(person.box, imageWidth, imageHeight)
                 val crop = cropBitmap(rotatedBitmap, roi) ?: continue
                 try {
                     roiPasses += 1
+                    val source = "PLAYER_ROI_" + (index + 1)
                     val pass = runPass(
                         bitmap = crop,
                         offsetX = roi.left,
@@ -113,16 +134,14 @@ class ObjectDetectorEngine(context: Context) {
                         includePeople = false,
                         ballThreshold = 0.05f
                     )
-
                     if (pass.bestBallScore > bestBallScore) {
                         bestBallScore = pass.bestBallScore
                         bestBallSource = pass.bestBallSource
                     }
-
                     val balls = pass.detections.filter { it.label == "sports ball" }
                     if (balls.isNotEmpty()) {
                         merged += balls
-                        acceptedBall = true
+                        break
                     }
                 } finally {
                     if (!crop.isRecycled) crop.recycle()
@@ -169,7 +188,8 @@ class ObjectDetectorEngine(context: Context) {
                             det.boundingBox.top + offsetY,
                             det.boundingBox.right + offsetX,
                             det.boundingBox.bottom + offsetY
-                        )
+                        ),
+                        source = source
                     )
                 }
             } else if (includePeople && label == "person" && score >= 0.30f) {
@@ -181,7 +201,8 @@ class ObjectDetectorEngine(context: Context) {
                         det.boundingBox.top + offsetY,
                         det.boundingBox.right + offsetX,
                         det.boundingBox.bottom + offsetY
-                    )
+                    ),
+                    source = source
                 )
             }
         }
