@@ -63,7 +63,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val captureTimeMs: Long,
         val receivedTimeMs: Long,
         val reason: String,
-        val motionCount: Int
+        val motionCount: Int,
+        val playersAtCapture: PlayerIdentityTracker.Snapshot,
+        val motionAtCapture: List<MotionBallProposer.Proposal>,
+        val hoopAtCapture: RectF?,
+        val wasLockedAtCapture: Boolean
     )
 
     private lateinit var cameraExecutor: ExecutorService
@@ -74,6 +78,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var analysisBitmap: Bitmap? = null
 
     private lateinit var ballFusion: BallTrackFusion
+    private lateinit var ballSearchPlanner: BallSearchPlanner
     private lateinit var motionBallProposer: MotionBallProposer
     private lateinit var playerIdentityTracker: PlayerIdentityTracker
     private val yoloBusy = AtomicBoolean(false)
@@ -149,6 +154,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         yoloExecutor = Executors.newSingleThreadExecutor()
         ballExecutor = Executors.newSingleThreadExecutor()
         motionBallProposer = MotionBallProposer()
+        ballSearchPlanner = BallSearchPlanner()
         ballFusion = BallTrackFusion { event ->
             debugLogger.logEvent(
                 eventType = "BALL_FUSION_EVENT",
@@ -323,6 +329,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.startButton).setOnClickListener {
             tracker.resetSession()
             ballFusion.reset()
+            ballSearchPlanner.reset()
             motionBallProposer.reset()
             playerIdentityTracker.reset()
             debugLogger.logEvent(
@@ -342,6 +349,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             game.reset()
             tracker.resetSession()
             ballFusion.reset()
+            ballSearchPlanner.reset()
             motionBallProposer.reset()
             playerIdentityTracker.reset()
             commentary.reset()
@@ -775,12 +783,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 )
                             }
 
-                        ballFusion.observe(
-                            detections = sceneBalls,
-                            captureTimeMs = packet.captureTimeMs,
-                            receivedTimeMs = packet.receivedTimeMs,
-                            source = "SCENE_YOLO"
-                        )
+                        // Scene YOLO is now corroboration only. v0.5 could
+                        // seed a completely false track from a full-frame false
+                        // positive, so v0.6 never acquires a new ball here.
+                        if (ballFusion.isLocked(packet.receivedTimeMs)) {
+                            ballFusion.observe(
+                                detections = sceneBalls,
+                                captureTimeMs = packet.captureTimeMs,
+                                receivedTimeMs = packet.receivedTimeMs,
+                                source = "SCENE_YOLO"
+                            )
+                        }
                     }
 
                     pendingBall.getAndSet(null)?.let { packet ->
@@ -796,7 +809,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         val validatedDetections = validateBallDetectionsForSearch(
                             detections = rawDetections,
                             roi = packet.result.roi,
-                            reason = packet.reason
+                            reason = packet.reason,
+                            players = packet.playersAtCapture,
+                            motionProposals = packet.motionAtCapture,
+                            hoop = packet.hoopAtCapture,
+                            wasLocked = packet.wasLockedAtCapture
                         )
 
                         val accepted = ballFusion.observe(
@@ -898,7 +915,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.5.3 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.6.0 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     ballText
@@ -921,13 +938,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             bitmap.copy(Bitmap.Config.ARGB_8888, false)
                         val captureRotation = rotationDegrees
                         val captureTime = frameTime
-                        val search = ballFusion.nextSearchRoi(
+                        val search = ballSearchPlanner.next(
                             players = players,
                             hoop = tracker.hoopRect,
-                            nowMs = frameTime,
-                            motionProposals = motionProposals
+                            motionProposals = motionProposals,
+                            active = ballFusion.searchAnchor(frameTime),
+                            focusPlayer = snapshot.lastPossessor,
+                            rimPriority = tracker.needsFastBallTracking
                         )
                         val roi = search.rect
+                        val capturePlayers = PlayerIdentityTracker.Snapshot(
+                            playerA = players.playerA?.let { RectF(it) },
+                            playerB = players.playerB?.let { RectF(it) }
+                        )
+                        val captureMotion = motionProposals.map {
+                            it.copy(roi = RectF(it.roi))
+                        }
+                        val captureHoop = tracker.hoopRect?.let { RectF(it) }
+                        val captureWasLocked = ballFusion.isLocked(frameTime)
 
                         ballExecutor.execute {
                             try {
@@ -942,7 +970,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                         captureTimeMs = captureTime,
                                         receivedTimeMs = SystemClock.uptimeMillis(),
                                         reason = search.reason,
-                                        motionCount = motionProposals.size
+                                        motionCount = motionProposals.size,
+                                        playersAtCapture = capturePlayers,
+                                        motionAtCapture = captureMotion,
+                                        hoopAtCapture = captureHoop,
+                                        wasLockedAtCapture = captureWasLocked
                                     )
                                 )
                             } catch (e: Exception) {
