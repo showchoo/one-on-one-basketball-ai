@@ -27,8 +27,8 @@ import kotlin.math.min
  */
 class BallRoiDetectorEngine(context: Context) : AutoCloseable {
     companion object {
-        private const val MODEL_FILE = "basketball_yolov8n_416.onnx"
-        private const val INPUT_SIZE = 416
+        private const val MODEL_FILE = "basketball_yolov8n_320.onnx"
+        private const val INPUT_SIZE = 320
         private const val BALL_CLASS = 0
         private const val BALL_THRESHOLD = 0.06f
         private const val NMS_IOU = 0.40f
