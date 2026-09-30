@@ -1,5 +1,3 @@
-import java.net.URL
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,8 +20,8 @@ android {
         applicationId = "jp.showchoo.oneononeai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.1"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -52,24 +50,5 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
 
-    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
-    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
-
-val modelFile = layout.projectDirectory.file("src/main/assets/efficientdet-lite0.tflite").asFile
-val modelUrl = "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/object_detection/android/lite-model_efficientdet_lite0_detection_metadata_1.tflite"
-
-tasks.register("downloadDetectionModel") {
-    outputs.file(modelFile)
-    doLast {
-        if (!modelFile.exists() || modelFile.length() < 1_000_000L) {
-            modelFile.parentFile.mkdirs()
-            println("Downloading EfficientDet-Lite0 model...")
-            URL(modelUrl).openStream().use { input ->
-                modelFile.outputStream().use { output -> input.copyTo(output) }
-            }
-        }
-    }
-}
-
-tasks.named("preBuild").configure { dependsOn("downloadDetectionModel") }
