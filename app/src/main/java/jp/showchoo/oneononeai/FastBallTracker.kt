@@ -218,7 +218,9 @@ class FastBallTracker(
 
         // Estimate velocity from the previous active track only when YOLO agrees
         // reasonably well. Otherwise start fresh from this detector anchor.
-        val existing = boxNorm
+        val existing = boxNorm?.let { RectF(it) }
+        val existingX = existing?.let { centerX(it) }
+        val existingY = existing?.let { centerY(it) }
         var localVx = 0f
         var localVy = 0f
         if (existing != null && lastUpdateMs > 0L) {
@@ -330,6 +332,45 @@ class FastBallTracker(
                     " buffered=" + replayFrames.size
             )
             return
+        }
+
+        val startX = centerX(normalizedBox)
+        val startY = centerY(normalizedBox)
+        val displacement = hypot(
+            (centerX(currentBox) - startX).toDouble(),
+            (centerY(currentBox) - startY).toDouble()
+        ).toFloat()
+
+        if (
+            existing == null &&
+            replayFrames.size >= 3 &&
+            detectorConfidence < 0.15f &&
+            displacement < 0.012f
+        ) {
+            onDebugEvent(
+                "FAST_ANCHOR_REJECT static_low_conf conf=$detectorConfidence " +
+                    "move=$displacement replayed=$replayed"
+            )
+            return
+        }
+
+        if (
+            existing != null &&
+            existingX != null &&
+            existingY != null &&
+            detectorConfidence < 0.20f
+        ) {
+            val finalToExisting = hypot(
+                (centerX(currentBox) - existingX).toDouble(),
+                (centerY(currentBox) - existingY).toDouble()
+            ).toFloat()
+            if (finalToExisting > 0.18f) {
+                onDebugEvent(
+                    "FAST_ANCHOR_REJECT far_jump conf=$detectorConfidence " +
+                        "distance=$finalToExisting"
+                )
+                return
+            }
         }
 
         boxNorm = currentBox
