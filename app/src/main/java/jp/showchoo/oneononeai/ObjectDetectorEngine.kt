@@ -33,7 +33,7 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
         private const val HOOP = 1
         private const val PLAYER = 2
 
-        private const val BALL_THRESHOLD = 0.12f
+        private const val BALL_THRESHOLD = 0.05f
         private const val HOOP_THRESHOLD = 0.30f
         private const val PLAYER_THRESHOLD = 0.25f
         private const val NMS_IOU = 0.45f
@@ -223,11 +223,20 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
                     else -> return@mapNotNull null
                 }
 
+                val appearance = if (candidate.classId == PLAYER) {
+                    sampleTorsoAppearance(rotated, candidate.box)
+                } else {
+                    null
+                }
+
                 AiDetection(
                     label = label,
                     score = candidate.score,
                     box = candidate.box,
-                    source = "BASKET_YOLO"
+                    source = "BASKET_YOLO",
+                    appearanceR = appearance?.getOrNull(0) ?: -1f,
+                    appearanceG = appearance?.getOrNull(1) ?: -1f,
+                    appearanceB = appearance?.getOrNull(2) ?: -1f
                 )
             }
 
@@ -249,6 +258,49 @@ class ObjectDetectorEngine(context: Context) : AutoCloseable {
                 rotated.recycle()
             }
         }
+    }
+
+    private fun sampleTorsoAppearance(bitmap: Bitmap, box: RectF): FloatArray? {
+        val left = (box.left + box.width() * 0.25f).toInt().coerceIn(0, bitmap.width - 1)
+        val right = (box.right - box.width() * 0.25f).toInt().coerceIn(left + 1, bitmap.width)
+        val top = (box.top + box.height() * 0.18f).toInt().coerceIn(0, bitmap.height - 1)
+        val bottom = (box.top + box.height() * 0.58f).toInt().coerceIn(top + 1, bitmap.height)
+        if (right - left < 4 || bottom - top < 4) return null
+
+        val stepX = max(2, (right - left) / 12)
+        val stepY = max(2, (bottom - top) / 12)
+
+        var sumR = 0f
+        var sumG = 0f
+        var sumB = 0f
+        var count = 0
+
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel).toFloat()
+                val g = Color.green(pixel).toFloat()
+                val b = Color.blue(pixel).toFloat()
+                val total = r + g + b
+                val maxC = max(r, max(g, b))
+                val minC = min(r, min(g, b))
+
+                // Ignore near-black, near-white and almost gray pixels.
+                if (total > 90f && total < 690f && maxC - minC > 18f) {
+                    sumR += r / total
+                    sumG += g / total
+                    sumB += b / total
+                    count++
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+
+        if (count < 4) return null
+        return floatArrayOf(sumR / count, sumG / count, sumB / count)
     }
 
     private fun nms(
