@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target")
                 if (commentary.mode != CommentaryMode.OFF) {
                     tts?.stop()
-                    val mcPlayed = mcVoicePack.playSequence("are_you_ready", "tip_off")
+                    val mcPlayed = mcVoicePack.playGameStart()
                     if (!mcPlayed) {
                         commentary.onGameStart(target)?.let { speak(it) }
                     }
@@ -131,14 +131,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     detail = "player=${event.player}; gameOver=${event.gameOver}"
                 )
                 if (commentary.mode != CommentaryMode.OFF) {
-                    if (event.gameOver) {
-                        tts?.stop()
-                        val mcPlayed = mcVoicePack.play("game_over")
-                        if (!mcPlayed) {
-                            commentary.onScore(event)?.let { speak(it) }
-                        }
-                    } else {
+                    tts?.stop()
+                    val mcPlayed = mcVoicePack.playScoreEvent(event)
+                    if (!mcPlayed) {
                         commentary.onScore(event)?.let { speak(it) }
+                    } else {
+                        debugLogger.logEvent(
+                            "MC_VOICE_EVENT",
+                            scoreA = event.scoreA,
+                            scoreB = event.scoreB,
+                            points = event.points,
+                            detail = "player=${event.player}; gameOver=${event.gameOver}; pack=${mcVoicePack.name}"
+                        )
                     }
                 }
             },
@@ -458,7 +462,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         AlertDialog.Builder(this)
             .setTitle("MC音声パック")
-            .setMessage(mcVoicePack.name)
+            .setMessage("${mcVoicePack.name}\n${mcVoicePack.clipCount} clips loaded")
             .setPositiveButton("試聴") { _, _ ->
                 tts?.stop()
                 mcVoicePack.previewAll()
