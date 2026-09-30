@@ -26,9 +26,8 @@ jobs:
 
       - name: Install stable debug signing key
         run: |
-          mkdir -p "$HOME/.android"
-          base64 --decode ci/stable-debug.keystore.b64 > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
+          base64 --decode ci/stable-debug.keystore.b64 > ci/stable-debug.keystore
+          chmod 600 ci/stable-debug.keystore
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
