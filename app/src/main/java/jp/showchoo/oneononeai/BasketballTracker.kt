@@ -36,6 +36,9 @@ class BasketballTracker(
     private var armedBallY = 0f
     private var lastScoreMs = 0L
 
+    val needsFastBallTracking: Boolean
+        get() = currentShotPlayer != null || hoopState == HoopState.ARMED
+
     fun resetSession() {
         playerA = null
         playerB = null
