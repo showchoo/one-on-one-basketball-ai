@@ -95,8 +95,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             onScoreChanged = { a, b -> updateScoreUi(a, b) },
             onGameStarted = { target ->
                 debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target; voice=street_mc")
-                tts?.stop()
-                streetMc.playReadyTipoff()
+                if (commentary.mode != CommentaryMode.OFF) {
+                    tts?.stop()
+                    streetMc.playReadyTipoff()
+                }
             },
             onScoreEvent = { event ->
                 debugLogger.logEvent(
@@ -112,8 +114,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             },
             onGameOver = { winner, a, b ->
                 debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner; voice=street_mc")
-                tts?.stop()
-                streetMc.playVictory()
+                if (commentary.mode != CommentaryMode.OFF) {
+                    tts?.stop()
+                    streetMc.playVictory()
+                }
                 statusText.text = "GAME: $winner WIN  $a-$b"
             }
         )
@@ -168,7 +172,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         commentaryButton.setOnClickListener {
             commentary.mode = commentary.mode.next()
             commentaryButton.text = commentary.mode.buttonLabel
-            if (commentary.mode == CommentaryMode.OFF) tts?.stop()
+            if (commentary.mode == CommentaryMode.OFF) {
+                tts?.stop()
+                streetMc.stop()
+            }
             debugLogger.logEvent("COMMENTARY_MODE", detail = commentary.mode.name)
             statusText.text = commentary.mode.buttonLabel
         }
