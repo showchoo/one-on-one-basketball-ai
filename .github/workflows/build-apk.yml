@@ -80,8 +80,34 @@ jobs:
               print("Installed model:", dest, dest.stat().st_size, "bytes")
 
           export_and_copy(640, "basketball_yolov8n.onnx")
-          export_and_copy(320, "basketball_yolov8n_320.onnx")
           PY
+
+      - name: Export dedicated basketball YOLOv5 model to ONNX
+        run: |
+          python3 -m pip install "onnx>=1.12" pandas pyyaml requests scipy torchvision tqdm psutil
+          git clone --depth 1 https://github.com/ultralytics/yolov5.git .model-build/yolov5
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.request import urlretrieve
+
+          work = Path(".model-build")
+          pt = work / "yolov5s_basketball.pt"
+          url = (
+              "https://raw.githubusercontent.com/Stardust87/"
+              "basketball-detection/main/models/yolov5s_basketball.pt"
+          )
+          urlretrieve(url, pt)
+          print("Downloaded dedicated basketball model:", pt, pt.stat().st_size)
+          PY
+          python3 .model-build/yolov5/export.py \
+            --weights .model-build/yolov5s_basketball.pt \
+            --imgsz 320 320 \
+            --include onnx \
+            --opset 12 \
+            --device cpu
+          cp .model-build/yolov5s_basketball.onnx \
+            app/src/main/assets/basketball_ball_yolov5s_320.onnx
+          ls -lh app/src/main/assets/basketball_ball_yolov5s_320.onnx
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
@@ -89,6 +115,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: one-on-one-ai-v0.6.1-apk
+          name: one-on-one-ai-v0.6.2-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
