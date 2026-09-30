@@ -42,7 +42,7 @@ class BasketballTracker(
         val confidence: Float,
         val source: String
     ) {
-        val isMeasured: Boolean get() = source != "FAST_PREDICT"
+        val isMeasured: Boolean get() = source != "BALL_PREDICT"
     }
 
     private val history = ArrayDeque<BallSample>()
@@ -79,7 +79,7 @@ class BasketballTracker(
         belowRimMs = 0L
         cooldownUntilMs = 0L
         savedHoop = null
-        onDebugEvent("TRACKER_RESET_V040")
+        onDebugEvent("TRACKER_RESET_V050")
     }
 
     fun updateYoloDetections(
@@ -121,7 +121,7 @@ class BasketballTracker(
 
     fun updateFrame(
         players: PlayerIdentityTracker.Snapshot,
-        ball: FastBallTracker.Result?,
+        ball: BallTrackFusion.Result?,
         nowMs: Long
     ): TrackerSnapshot {
         if (ball != null) {
@@ -136,7 +136,7 @@ class BasketballTracker(
             )
             trimHistory(nowMs)
 
-            if (ball.source != "FAST_PREDICT") {
+            if (ball.source != "BALL_PREDICT") {
                 updatePossession(
                     ball.box,
                     players.playerA,
@@ -202,7 +202,7 @@ class BasketballTracker(
 
     private fun updateShotState(
         players: PlayerIdentityTracker.Snapshot,
-        ball: FastBallTracker.Result?,
+        ball: BallTrackFusion.Result?,
         nowMs: Long
     ): String {
         val hoop = savedHoop ?: hoopRect ?: return "RIM SEARCH"
@@ -251,7 +251,7 @@ class BasketballTracker(
 
                     shotState = ShotState.ABOVE_RIM
                     onDebugEvent(
-                        "SHOT_ARMED_V040 player=$shotPlayer value=$shotValue source=" +
+                        "SHOT_ARMED_V050 player=$shotPlayer value=$shotValue source=" +
                             ball.source + " conf=" + ball.confidence
                     )
                     return "SHOT / ABOVE"
@@ -262,7 +262,7 @@ class BasketballTracker(
 
             ShotState.ABOVE_RIM -> {
                 if (nowMs - shotStartedMs > 3200L) {
-                    resetShotState("SHOT_TIMEOUT_ABOVE_V040")
+                    resetShotState("SHOT_TIMEOUT_ABOVE_V050")
                     return "MISS / TIMEOUT"
                 }
 
@@ -276,12 +276,12 @@ class BasketballTracker(
                     belowRimMs = nowMs
                     shotState = ShotState.BELOW_RIM
                     onDebugEvent(
-                        "SHOT_BELOW_V040 x=$bx y=$by source=" + (ball?.source ?: "NONE")
+                        "SHOT_BELOW_V050 x=$bx y=$by source=" + (ball?.source ?: "NONE")
                     )
                     return "SHOT / VERIFY"
                 }
 
-                return if (ball?.source == "FAST_PREDICT") {
+                return if (ball?.source == "BALL_PREDICT") {
                     "SHOT / PREDICT"
                 } else {
                     "SHOT / ABOVE"
@@ -300,7 +300,7 @@ class BasketballTracker(
                     val scorer = shotPlayer
                     if (scorer != null) {
                         onDebugEvent(
-                            "AUTO_SCORE_V040 player=$scorer points=$shotValue"
+                            "AUTO_SCORE_V050 player=$scorer points=$shotValue"
                         )
                         onAutomaticScore(scorer, shotValue)
                     } else {
@@ -314,7 +314,7 @@ class BasketballTracker(
                 }
 
                 if (nowMs - belowRimMs >= 700L) {
-                    resetShotState("SHOT_MISS_V040")
+                    resetShotState("SHOT_MISS_V050")
                     return "MISS"
                 }
 
@@ -326,11 +326,11 @@ class BasketballTracker(
     }
 
     private fun shouldArmShot(
-        ball: FastBallTracker.Result,
+        ball: BallTrackFusion.Result,
         hoop: RectF,
         nowMs: Long
     ): Boolean {
-        if (ball.source == "FAST_PREDICT") return false
+        if (ball.source == "BALL_PREDICT") return false
 
         val x = centerX(ball.box)
         val y = centerY(ball.box)
@@ -430,7 +430,7 @@ class BasketballTracker(
 
         if (crossingX != null) {
             onDebugEvent(
-                "MAKE_CHECK_V040 crossX=$crossingX direct=$directCross " +
+                "MAKE_CHECK_V050 crossX=$crossingX direct=$directCross " +
                     "down=$continuedDown near=$stayedNearRim samples=" + samples.size
             )
         }
