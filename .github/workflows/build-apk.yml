@@ -32,7 +32,17 @@ jobs:
       - name: Install bundled MC voice pack
         run: |
           mkdir -p app/src/main/assets
-          base64 --decode ci/mc_voice_pack.zip.b64 > app/src/main/assets/mc_voice_pack.zip
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          src = Path("ci/mc_voice_pack.zip.b64").read_text(encoding="utf-8")
+          compact = "".join(src.split())
+          compact += "=" * (-len(compact) % 4)
+          data = base64.b64decode(compact, validate=False)
+          Path("app/src/main/assets/mc_voice_pack.zip").write_bytes(data)
+          print(f"MC voice pack: {len(data)} bytes")
+          PY
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
