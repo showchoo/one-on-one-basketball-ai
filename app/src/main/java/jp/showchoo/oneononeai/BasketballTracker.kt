@@ -226,15 +226,18 @@ class BasketballTracker(
         }
 
         if (bestA != null && bestB != null && bestTotal < 1.0f) {
-            val aVelocity = updatePlayerTrack(a, bestA, playerAVx, playerAVy, nowMs)
+            val chosenA = bestA!!
+            val chosenB = bestB!!
+
+            val aVelocity = updatePlayerTrack(a, chosenA, playerAVx, playerAVy, nowMs)
             playerAVx = aVelocity.first
             playerAVy = aVelocity.second
-            playerAColor = updateColor(playerAColor, bestA)
+            playerAColor = updateColor(playerAColor, chosenA)
 
-            val bVelocity = updatePlayerTrack(b, bestB, playerBVx, playerBVy, nowMs)
+            val bVelocity = updatePlayerTrack(b, chosenB, playerBVx, playerBVy, nowMs)
             playerBVx = bVelocity.first
             playerBVy = bVelocity.second
-            playerBColor = updateColor(playerBColor, bestB)
+            playerBColor = updateColor(playerBColor, chosenB)
             return
         }
 
