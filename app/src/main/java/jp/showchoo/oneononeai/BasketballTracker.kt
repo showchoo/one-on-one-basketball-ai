@@ -131,36 +131,35 @@ class BasketballTracker(
             }
 
         val selected = selectBall(ballCandidates, nowMs)
-        val ball = selected?.second
+        var ball = selected?.second
+        var ballPredicted = false
 
         if (selected != null) {
             val detection = selected.first
             val detectedBall = selected.second
-            val bx = centerX(detectedBall)
-            val by = centerY(detectedBall)
-
-            ballHistory.addLast(
-                BallSample(
-                    x = bx,
-                    y = by,
-                    timeMs = nowMs,
-                    score = detection.score
-                )
-            )
-            while (ballHistory.size > 120) ballHistory.removeFirst()
-            while (ballHistory.isNotEmpty() && nowMs - ballHistory.first().timeMs > 8000L) {
-                ballHistory.removeFirst()
-            }
-
-            lastBallBox = detectedBall
-            lastBallSeenMs = nowMs
-
+            updateBallMotion(detectedBall, detection.score, nowMs)
             updatePossessionAndReleaseCandidate(detectedBall, nowMs)
-        } else if (nowMs - lastBallSeenMs > 900L) {
+        } else if (shotState != ShotState.IDLE) {
+            val predicted = predictBall(nowMs)
+            if (predicted != null) {
+                ball = predicted
+                ballPredicted = true
+                ballHistory.addLast(
+                    BallSample(
+                        x = centerX(predicted),
+                        y = centerY(predicted),
+                        timeMs = nowMs,
+                        score = 0f,
+                        predicted = true
+                    )
+                )
+                trimBallHistory(nowMs)
+            }
+        } else if (nowMs - lastBallSeenMs > 1100L) {
             lastBallBox = null
         }
 
-        val status = updateShotState(ball, nowMs)
+        val status = updateShotState(ball, nowMs, ballPredicted)
         return snapshot(ball, status)
     }
 
