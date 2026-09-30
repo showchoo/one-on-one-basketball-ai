@@ -1,0 +1,9 @@
+E-BARD Basketball Object Detection Model Attribution
+
+Model: BODD_yolov8n_0001
+Author / project: Gabriele Giudici, E-BARD
+Source: https://huggingface.co/GabrieleGiudici/E-BARD-detection-models
+License stated by the model repository: Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The model is used for basketball / hoop / player detection in the v0.3 computer-vision pipeline.
+The application code is separate from the model license.
