@@ -603,7 +603,7 @@ class BasketballTracker(
                     }
                 }
 
-                return "SHOT / ABOVE RIM"
+                return if (ballPredicted) "SHOT / PREDICT" else "SHOT / ABOVE RIM"
             }
 
             ShotState.BELOW_RIM -> {
@@ -675,6 +675,9 @@ class BasketballTracker(
         }
         if (shotSamples.isEmpty()) return false
 
+        val actualSamples = shotSamples.filter { !it.predicted }
+        if (actualSamples.size < 2) return false
+
         val postRim = shotSamples.filter {
             it.timeMs >= ballBelowMs &&
                 it.timeMs <= ballBelowMs + 900L &&
@@ -686,8 +689,8 @@ class BasketballTracker(
             val maxLateral = postRim.maxOf { abs(it.x - hx) }
             val avgX = postRim.map { it.x }.average().toFloat()
             val movedDown = postRim.last().y >= postRim.first().y
-            val stayedNarrow = maxLateral < hw * 0.85f
-            val centered = abs(avgX - hx) < hw * 0.70f
+            val stayedNarrow = maxLateral < hw * 1.00f
+            val centered = abs(avgX - hx) < hw * 0.82f
             trajectoryMake = stayedNarrow && movedDown && centered
         }
 
@@ -705,8 +708,8 @@ class BasketballTracker(
         var disappearanceMake = false
         if (lastNearAbove != null && firstBelow != null) {
             val gapMs = firstBelow.timeMs - lastNearAbove.timeMs
-            val centeredBelow = abs(firstBelow.x - hx) < hw * 0.75f
-            disappearanceMake = gapMs >= 150L && centeredBelow
+            val centeredBelow = abs(firstBelow.x - hx) < hw * 0.90f
+            disappearanceMake = gapMs >= 100L && centeredBelow
         }
 
         var interpolationMake = false
@@ -719,7 +722,7 @@ class BasketballTracker(
                 if (dy > 0.0001f) {
                     val t = ((hy - a.y) / dy).coerceIn(0f, 1f)
                     val crossingX = a.x + (b.x - a.x) * t
-                    if (abs(crossingX - hx) < hw * 0.65f) {
+                    if (abs(crossingX - hx) < hw * 0.78f) {
                         interpolationMake = true
                         break
                     }
@@ -729,15 +732,16 @@ class BasketballTracker(
 
         val vanishedNearRim =
             postRim.isEmpty() &&
-                nowMs - lastBallSeenMs >= 350L &&
-                shotSamples.lastOrNull()?.let {
-                    abs(it.x - hx) < hw * 0.8f &&
-                        abs(it.y - hy) < hh * 1.8f
+                nowMs - lastBallSeenMs >= 300L &&
+                actualSamples.lastOrNull()?.let {
+                    abs(it.x - hx) < hw * 0.95f &&
+                        abs(it.y - hy) < hh * 2.0f
                 } == true
 
         onDebugEvent(
-            "MAKE_CLASSIFY trajectory=$trajectoryMake disappearance=$disappearanceMake " +
-                "interpolation=$interpolationMake vanish=$vanishedNearRim post=" + postRim.size
+            "MAKE_CLASSIFY_V032 trajectory=$trajectoryMake disappearance=$disappearanceMake " +
+                "interpolation=$interpolationMake vanish=$vanishedNearRim actual=" +
+                actualSamples.size + " predicted=" + shotSamples.count { it.predicted }
         )
 
         return trajectoryMake || disappearanceMake || interpolationMake || vanishedNearRim
@@ -758,8 +762,8 @@ class BasketballTracker(
     private fun isNearRim(x: Float, y: Float, hoop: RectF): Boolean {
         val hx = centerX(hoop)
         val hy = centerY(hoop)
-        return abs(x - hx) < hoop.width() * 1.2f &&
-            abs(y - hy) < hoop.height() * 2.0f
+        return abs(x - hx) < hoop.width() * 1.4f &&
+            abs(y - hy) < hoop.height() * 2.2f
     }
 
     private fun nearestPossessor(ball: RectF): Char? {
