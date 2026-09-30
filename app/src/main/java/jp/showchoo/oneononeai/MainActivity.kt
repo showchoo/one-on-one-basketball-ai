@@ -38,8 +38,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         private const val PREF_VOICE_NAME = "voice_name"
         private const val PREF_SPEECH_RATE = "speech_rate"
         private const val PREF_PITCH = "pitch"
-        private const val DEFAULT_SPEECH_RATE = 1.05f
-        private const val DEFAULT_PITCH = 1.0f
+        private const val DEFAULT_SPEECH_RATE = 1.18f
+        private const val DEFAULT_PITCH = 0.88f
     }
 
     private lateinit var previewView: PreviewView
@@ -296,21 +296,56 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         container.addView(pitchLabel)
         container.addView(pitchSeek)
 
+        val presetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val streetPresetButton = Button(this).apply {
+            text = "STREET"
+            setOnClickListener {
+                rateSeek.progress = rateToProgress(1.18f)
+                pitchSeek.progress = pitchToProgress(0.88f)
+                applyPreviewVoice(
+                    voices.getOrNull(voiceSpinner.selectedItemPosition),
+                    1.18f,
+                    0.88f
+                )
+                speak("エー、いった！外からドン！ツー！でかい！")
+            }
+        }
+        presetRow.addView(streetPresetButton)
+
+        val arenaPresetButton = Button(this).apply {
+            text = "ARENA"
+            setOnClickListener {
+                rateSeek.progress = rateToProgress(1.08f)
+                pitchSeek.progress = pitchToProgress(0.96f)
+                applyPreviewVoice(
+                    voices.getOrNull(voiceSpinner.selectedItemPosition),
+                    1.08f,
+                    0.96f
+                )
+                speak("エー、決めた！ツーポイント！ナイスショット！")
+            }
+        }
+        presetRow.addView(arenaPresetButton)
+        container.addView(presetRow)
+
         val testButton = Button(this).apply {
-            text = "試聴"
+            text = "現在の設定を試聴"
             setOnClickListener {
                 applyPreviewVoice(
                     voices.getOrNull(voiceSpinner.selectedItemPosition),
                     progressToRate(rateSeek.progress),
                     progressToPitch(pitchSeek.progress)
                 )
-                speak("実況音声のテストです。プレイヤーA、外から決めた！2ポイント！")
+                speak("エー、攻める！バケツ！ツー！流れ来てる！")
             }
         }
         container.addView(testButton)
 
         AlertDialog.Builder(this)
-            .setTitle("実況音声設定")
+            .setTitle("実況音声 / STREET VOICE")
             .setView(container)
             .setPositiveButton("保存") { _, _ ->
                 val selectedVoice = voices.getOrNull(voiceSpinner.selectedItemPosition)
