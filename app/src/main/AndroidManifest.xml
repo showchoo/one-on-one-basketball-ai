@@ -5,6 +5,8 @@
     <application
         android:allowBackup="true"
         android:label="1on1 AI Score"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.OneOnOneAI">
         <provider
             android:name="androidx.core.content.FileProvider"
