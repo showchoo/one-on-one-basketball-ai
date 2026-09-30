@@ -748,7 +748,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     pendingBall.getAndSet(null)?.let { packet ->
                         latestBallInferenceMs = packet.result.inferenceMs
                         val fusionSource =
-                            if (packet.reason == "MOTION") {
+                            if (packet.reason.startsWith("MOTION")) {
                                 "BALL_MOTION_ROI"
                             } else {
                                 "BALL_ROI_YOLO"
@@ -836,7 +836,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.5.1 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.5.2 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     ballText
