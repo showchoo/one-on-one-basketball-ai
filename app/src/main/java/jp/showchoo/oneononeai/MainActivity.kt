@@ -57,19 +57,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val receivedTimeMs: Long
     )
 
+    private data class BallPacket(
+        val result: BallRoiDetectorEngine.Result,
+        val captureTimeMs: Long,
+        val receivedTimeMs: Long
+    )
+
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var yoloExecutor: ExecutorService
+    private lateinit var ballExecutor: ExecutorService
     @Volatile private var detector: ObjectDetectorEngine? = null
+    @Volatile private var ballDetector: BallRoiDetectorEngine? = null
     private var analysisBitmap: Bitmap? = null
 
-    private lateinit var fastBallTracker: FastBallTracker
+    private lateinit var ballFusion: BallTrackFusion
     private lateinit var playerIdentityTracker: PlayerIdentityTracker
     private val yoloBusy = AtomicBoolean(false)
+    private val ballBusy = AtomicBoolean(false)
     private val pendingYolo = AtomicReference<YoloPacket?>(null)
+    private val pendingBall = AtomicReference<BallPacket?>(null)
     private var lastYoloLaunchAt = 0L
+    private var lastBallLaunchAt = 0L
     private var lastLogAt = 0L
     private var lastUiAt = 0L
     private var latestYoloInferenceMs = 0L
+    private var latestBallInferenceMs = 0L
     private var latestYoloDetectionCount = 0
 
     private var tts: TextToSpeech? = null
@@ -131,9 +143,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
         yoloExecutor = Executors.newSingleThreadExecutor()
-        fastBallTracker = FastBallTracker { event ->
+        ballExecutor = Executors.newSingleThreadExecutor()
+        ballFusion = BallTrackFusion { event ->
             debugLogger.logEvent(
-                eventType = "FAST_BALL_EVENT",
+                eventType = "BALL_FUSION_EVENT",
                 scoreA = if (::game.isInitialized) game.scoreA else null,
                 scoreB = if (::game.isInitialized) game.scoreB else null,
                 detail = event
@@ -217,11 +230,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             try {
                 detector = ObjectDetectorEngine(applicationContext)
                 runOnUiThread {
-                    statusText.text = "v0.4準備完了 / YOLO + FAST TRACK"
+                    statusText.text = "v0.5 SCENE AI 準備完了"
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    statusText.text = "AI初期化失敗: ${e.message}"
+                    statusText.text = "Scene AI初期化失敗: ${e.message}"
+                }
+            }
+        }
+
+        ballExecutor.execute {
+            try {
+                ballDetector = BallRoiDetectorEngine(applicationContext)
+                runOnUiThread {
+                    statusText.text = "v0.5 BALL ROI AI 準備完了"
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Ball AI初期化失敗: ${e.message}"
                 }
             }
         }
@@ -291,7 +317,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         findViewById<Button>(R.id.startButton).setOnClickListener {
             tracker.resetSession()
-            fastBallTracker.reset()
+            ballFusion.reset()
             playerIdentityTracker.reset()
             debugLogger.logEvent(
                 "START_PRESSED",
@@ -309,7 +335,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             debugLogger.logEvent("RESET_PRESSED", scoreA = game.scoreA, scoreB = game.scoreB)
             game.reset()
             tracker.resetSession()
-            fastBallTracker.reset()
+            ballFusion.reset()
             playerIdentityTracker.reset()
             commentary.reset()
             tts?.stop()
@@ -640,7 +666,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .also { it.setSurfaceProvider(previewView.surfaceProvider) }
 
             val analysis = ImageAnalysis.Builder()
-                .setTargetResolution(Size(960, 540))
+                .setTargetResolution(Size(1280, 720))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
@@ -682,17 +708,62 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             imageHeight = packet.result.imageHeight,
                             nowMs = packet.captureTimeMs
                         )
+
+                        val sceneBalls = packet.result.detections
+                            .filter { it.label == "sports ball" }
+                            .map {
+                                AiDetection(
+                                    label = "sports ball",
+                                    score = it.score,
+                                    box = android.graphics.RectF(
+                                        (it.box.left / packet.result.imageWidth)
+                                            .coerceIn(0f, 1f),
+                                        (it.box.top / packet.result.imageHeight)
+                                            .coerceIn(0f, 1f),
+                                        (it.box.right / packet.result.imageWidth)
+                                            .coerceIn(0f, 1f),
+                                        (it.box.bottom / packet.result.imageHeight)
+                                            .coerceIn(0f, 1f)
+                                    ),
+                                    source = "SCENE_YOLO"
+                                )
+                            }
+
+                        ballFusion.observe(
+                            detections = sceneBalls,
+                            captureTimeMs = packet.captureTimeMs,
+                            receivedTimeMs = packet.receivedTimeMs,
+                            source = "SCENE_YOLO"
+                        )
                     }
 
-                    val fastBall = fastBallTracker.track(
-                        bitmap = bitmap,
-                        rotationDegrees = rotationDegrees,
-                        nowMs = frameTime
-                    )
+                    pendingBall.getAndSet(null)?.let { packet ->
+                        latestBallInferenceMs = packet.result.inferenceMs
+                        val accepted = ballFusion.observe(
+                            detections = packet.result.detections,
+                            captureTimeMs = packet.captureTimeMs,
+                            receivedTimeMs = packet.receivedTimeMs,
+                            source = "BALL_ROI_YOLO"
+                        )
+
+                        debugLogger.logEvent(
+                            "BALL_ROI_RESULT",
+                            detail =
+                                "accepted=" + accepted +
+                                    "; candidates=" + packet.result.detections.size +
+                                    "; inferenceMs=" + packet.result.inferenceMs +
+                                    "; roi=" + packet.result.roi.left + "|" +
+                                    packet.result.roi.top + "|" +
+                                    packet.result.roi.right + "|" +
+                                    packet.result.roi.bottom
+                        )
+                    }
+
                     val players = playerIdentityTracker.snapshot(frameTime)
+                    val fusedBall = ballFusion.predict(frameTime)
                     val snapshot = tracker.updateFrame(
                         players = players,
-                        ball = fastBall,
+                        ball = fusedBall,
                         nowMs = frameTime
                     )
 
@@ -715,11 +786,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         lastLogAt = frameTime
                         debugLogger.logFrame(
                             snapshot = snapshot,
-                            inferenceMs = latestYoloInferenceMs,
+                            inferenceMs = latestBallInferenceMs,
                             detectionCount = latestYoloDetectionCount,
-                            ballConfidence = fastBall?.confidence ?: 0f,
-                            ballSource = fastBall?.source ?: "NONE",
-                            roiPasses = 0,
+                            ballConfidence = fusedBall?.confidence ?: 0f,
+                            ballSource = fusedBall?.source ?: "NONE",
+                            roiPasses = 1,
                             scoreA = game.scoreA,
                             scoreB = game.scoreB
                         )
@@ -738,18 +809,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 displayHeight
                             )
 
-                            val ballText = if (fastBall != null) {
+                            val ballText = if (fusedBall != null) {
                                 "BALL %.2f %s".format(
-                                    fastBall.confidence,
-                                    fastBall.source
+                                    fusedBall.confidence,
+                                    fusedBall.source
                                 )
                             } else {
-                                "BALL --"
+                                "BALL SEARCH"
                             }
 
                             perfText.text =
-                                "v0.4 YOLO ${latestYoloInferenceMs}ms | " +
-                                    "TRACK ${fastBall?.trackingMs ?: 0L}ms | " +
+                                "v0.5 SCENE ${latestYoloInferenceMs}ms | " +
+                                    "BALL ${latestBallInferenceMs}ms | " +
                                     ballText
 
                             if (game.running) {
@@ -758,13 +829,55 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         }
                     }
 
-                    val yoloInterval =
-                        if (game.running) 350L else 600L
+                    val ballInterval = if (game.running) 120L else 220L
+                    val bd = ballDetector
+                    if (
+                        bd != null &&
+                        frameTime - lastBallLaunchAt >= ballInterval &&
+                        ballBusy.compareAndSet(false, true)
+                    ) {
+                        lastBallLaunchAt = frameTime
+                        val ballBitmap =
+                            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                        val captureRotation = rotationDegrees
+                        val captureTime = frameTime
+                        val roi = ballFusion.nextSearchRoi(
+                            players = players,
+                            hoop = tracker.hoopRect,
+                            nowMs = frameTime
+                        )
 
+                        ballExecutor.execute {
+                            try {
+                                val result = bd.detect(
+                                    bitmap = ballBitmap,
+                                    rotationDegrees = captureRotation,
+                                    roiNorm = roi
+                                )
+                                pendingBall.set(
+                                    BallPacket(
+                                        result = result,
+                                        captureTimeMs = captureTime,
+                                        receivedTimeMs = SystemClock.uptimeMillis()
+                                    )
+                                )
+                            } catch (e: Exception) {
+                                debugLogger.logEvent(
+                                    "BALL_ROI_ERROR",
+                                    detail = e.toString()
+                                )
+                            } finally {
+                                if (!ballBitmap.isRecycled) ballBitmap.recycle()
+                                ballBusy.set(false)
+                            }
+                        }
+                    }
+
+                    val sceneInterval = if (game.running) 850L else 1200L
                     val d = detector
                     if (
                         d != null &&
-                        frameTime - lastYoloLaunchAt >= yoloInterval &&
+                        frameTime - lastYoloLaunchAt >= sceneInterval &&
                         yoloBusy.compareAndSet(false, true)
                     ) {
                         lastYoloLaunchAt = frameTime
@@ -780,59 +893,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                     rotationDegrees = captureRotation,
                                     hoopRect = tracker.hoopRect
                                 )
-                                val receivedTime = SystemClock.uptimeMillis()
-
-                                val ballDetection = result.detections
-                                    .filter { it.label == "sports ball" }
-                                    .maxByOrNull { it.score }
-
-                                if (ballDetection != null) {
-                                    val norm = android.graphics.RectF(
-                                        (ballDetection.box.left / result.imageWidth)
-                                            .coerceIn(0f, 1f),
-                                        (ballDetection.box.top / result.imageHeight)
-                                            .coerceIn(0f, 1f),
-                                        (ballDetection.box.right / result.imageWidth)
-                                            .coerceIn(0f, 1f),
-                                        (ballDetection.box.bottom / result.imageHeight)
-                                            .coerceIn(0f, 1f)
-                                    )
-
-                                    debugLogger.logEvent(
-                                        "YOLO_BALL_ANCHOR",
-                                        detail =
-                                            "conf=" + ballDetection.score +
-                                                "; latencyMs=" + (receivedTime - captureTime) +
-                                                "; x=" + ((norm.left + norm.right) / 2f) +
-                                                "; y=" + ((norm.top + norm.bottom) / 2f)
-                                    )
-
-                                    fastBallTracker.anchor(
-                                        normalizedBox = norm,
-                                        bitmap = yoloBitmap,
-                                        rotationDegrees = captureRotation,
-                                        captureTimeMs = captureTime,
-                                        receivedTimeMs = receivedTime,
-                                        detectorConfidence = ballDetection.score
-                                    )
-                                }
 
                                 pendingYolo.set(
                                     YoloPacket(
                                         result = result,
                                         captureTimeMs = captureTime,
-                                        receivedTimeMs = receivedTime
+                                        receivedTimeMs = SystemClock.uptimeMillis()
                                     )
                                 )
                             } catch (e: Exception) {
                                 debugLogger.logEvent(
-                                    "YOLO_ERROR",
+                                    "SCENE_YOLO_ERROR",
                                     detail = e.toString()
                                 )
                             } finally {
-                                if (!yoloBitmap.isRecycled) {
-                                    yoloBitmap.recycle()
-                                }
+                                if (!yoloBitmap.isRecycled) yoloBitmap.recycle()
                                 yoloBusy.set(false)
                             }
                         }
@@ -886,8 +961,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onDestroy()
         cameraExecutor.shutdown()
         yoloExecutor.shutdown()
+        ballExecutor.shutdown()
         detector?.close()
         detector = null
+        ballDetector?.close()
+        ballDetector = null
         mcVoicePack.release()
         analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
         analysisBitmap = null
