@@ -10,7 +10,15 @@ class BasketballTracker(
     private val onDebugEvent: (String) -> Unit = {}
 ) {
     var hoopRect: RectF? = null
+        private set
     var threePointLine: List<PointF> = emptyList()
+    private var hoopLockedByUser = false
+
+    fun setManualHoop(rect: RectF) {
+        hoopRect = RectF(rect)
+        hoopLockedByUser = true
+        onDebugEvent("HOOP_MANUAL_LOCK")
+    }
 
     private data class PlayerObservation(
         val box: RectF,
@@ -36,12 +44,15 @@ class BasketballTracker(
         val x: Float,
         val y: Float,
         val timeMs: Long,
-        val score: Float
+        val score: Float,
+        val predicted: Boolean = false
     )
 
     private val ballHistory = ArrayDeque<BallSample>()
     private var lastBallBox: RectF? = null
     private var lastBallSeenMs = 0L
+    private var ballVx = 0f
+    private var ballVy = 0f
 
     private var releaseCandidatePlayer: Char? = null
     private var releaseCandidateValue = 1
@@ -72,6 +83,8 @@ class BasketballTracker(
         ballHistory.clear()
         lastBallBox = null
         lastBallSeenMs = 0L
+        ballVx = 0f
+        ballVy = 0f
         releaseCandidatePlayer = null
         releaseCandidateValue = 1
         releaseCandidateAtMs = 0L
