@@ -65,6 +65,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var controlsToggleButton: Button
     private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
+    private lateinit var streetMc: StreetMcPlayer
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera() else statusText.text = "カメラ権限が必要です"
@@ -84,6 +85,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
 
         debugLogger = DebugLogger(applicationContext)
+        streetMc = StreetMcPlayer(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -92,8 +94,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             targetScore = 10,
             onScoreChanged = { a, b -> updateScoreUi(a, b) },
             onGameStarted = { target ->
-                debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target")
-                commentary.onGameStart(target)?.let { speak(it) }
+                debugLogger.logEvent("GAME_START", scoreA = game.scoreA, scoreB = game.scoreB, detail = "target=$target; voice=street_mc")
+                tts?.stop()
+                streetMc.playReadyTipoff()
             },
             onScoreEvent = { event ->
                 debugLogger.logEvent(
@@ -103,10 +106,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     points = event.points,
                     detail = "player=${event.player}; gameOver=${event.gameOver}"
                 )
-                commentary.onScore(event)?.let { speak(it) }
+                if (!event.gameOver) {
+                    commentary.onScore(event)?.let { speak(it) }
+                }
             },
             onGameOver = { winner, a, b ->
-                debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner")
+                debugLogger.logEvent("GAME_OVER", scoreA = a, scoreB = b, detail = "winner=$winner; voice=street_mc")
+                tts?.stop()
+                streetMc.playVictory()
                 statusText.text = "GAME: $winner WIN  $a-$b"
             }
         )
@@ -348,8 +355,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         presetRow.addView(arenaPresetButton)
         container.addView(presetRow)
 
+        val mcTestButton = Button(this).apply {
+            text = "STREET MC サンプルを試聴"
+            setOnClickListener {
+                tts?.stop()
+                streetMc.playDemo()
+            }
+        }
+        container.addView(mcTestButton)
+
         val testButton = Button(this).apply {
-            text = "現在の設定を試聴"
+            text = "現在のTTS設定を試聴"
             setOnClickListener {
                 applyPreviewVoice(
                     voices.getOrNull(voiceSpinner.selectedItemPosition),
@@ -608,6 +624,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.close()
         super.onDestroy()
         cameraExecutor.shutdown()
+        streetMc.release()
         analysisBitmap?.let { if (!it.isRecycled) it.recycle() }
         analysisBitmap = null
         tts?.stop()
