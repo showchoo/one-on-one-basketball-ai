@@ -36,7 +36,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { viewBinding = false }
-    androidResources { noCompress += "tflite" }
+    androidResources { noCompress += "onnx" }
 }
 
 dependencies {
@@ -50,5 +50,5 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
 
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
 }
