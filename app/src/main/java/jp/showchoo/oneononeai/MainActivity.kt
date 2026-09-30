@@ -38,8 +38,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         private const val PREF_VOICE_NAME = "voice_name"
         private const val PREF_SPEECH_RATE = "speech_rate"
         private const val PREF_PITCH = "pitch"
-        private const val DEFAULT_SPEECH_RATE = 1.18f
-        private const val DEFAULT_PITCH = 0.88f
+        private const val DEFAULT_SPEECH_RATE = 1.10f
+        private const val DEFAULT_PITCH = 0.92f
     }
 
     private lateinit var previewView: PreviewView
@@ -237,13 +237,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val currentPitch = prefs.getFloat(PREF_PITCH, DEFAULT_PITCH)
         val savedVoiceName = prefs.getString(PREF_VOICE_NAME, null)
 
-        val allJapaneseVoices = tts?.voices
-            ?.filter { it.locale.language == Locale.JAPANESE.language }
-            ?.sortedBy { it.name }
-            .orEmpty()
-
-        val offlineVoices = allJapaneseVoices.filter { !it.isNetworkConnectionRequired }
-        val voices = if (offlineVoices.isNotEmpty()) offlineVoices else allJapaneseVoices
+        val voices = sortedJapaneseVoices()
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -259,8 +253,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             listOf("端末の標準日本語音声")
         } else {
             voices.mapIndexed { index, voice ->
-                val local = if (voice.isNetworkConnectionRequired) "オンライン" else "オフライン"
-                "音声 ${index + 1}  [$local]"
+                val source = if (voice.isNetworkConnectionRequired) "HUMAN / 高品質通信" else "OFFLINE"
+                val quality = when {
+                    voice.quality >= 500 -> "最高"
+                    voice.quality >= 400 -> "高"
+                    voice.quality >= 300 -> "標準"
+                    else -> "軽量"
+                }
+                "音声 ${index + 1}  [$source・品質:$quality]"
             }
         }
         voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceLabels)
@@ -299,6 +299,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val presetRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
+
+        val humanPresetButton = Button(this).apply {
+            text = "HUMAN"
+            setOnClickListener {
+                val bestHuman = bestHumanVoice(voices)
+                val bestHumanIndex = voices.indexOf(bestHuman)
+                if (bestHumanIndex >= 0) voiceSpinner.setSelection(bestHumanIndex)
+                rateSeek.progress = rateToProgress(1.10f)
+                pitchSeek.progress = pitchToProgress(0.92f)
+                applyPreviewVoice(bestHuman, 1.10f, 0.92f)
+                speak("エー、外からドン。ツー。でかい一本。")
+            }
+        }
+        presetRow.addView(humanPresetButton)
 
         val streetPresetButton = Button(this).apply {
             text = "STREET"
@@ -345,7 +359,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         container.addView(testButton)
 
         AlertDialog.Builder(this)
-            .setTitle("実況音声 / STREET VOICE")
+            .setTitle("実況音声 / HUMAN・STREET")
             .setView(container)
             .setPositiveButton("保存") { _, _ ->
                 val selectedVoice = voices.getOrNull(voiceSpinner.selectedItemPosition)
@@ -397,6 +411,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts?.setPitch(pitch)
     }
 
+    private fun sortedJapaneseVoices(): List<Voice> =
+        tts?.voices
+            ?.filter { it.locale.language == Locale.JAPANESE.language }
+            ?.sortedWith(
+                compareByDescending<Voice> { it.quality }
+                    .thenBy { it.latency }
+                    .thenBy { if (it.isNetworkConnectionRequired) 0 else 1 }
+                    .thenBy { it.name }
+            )
+            .orEmpty()
+
+    private fun bestHumanVoice(voices: List<Voice> = sortedJapaneseVoices()): Voice? {
+        val network = voices.filter { it.isNetworkConnectionRequired }
+        return (if (network.isNotEmpty()) network else voices)
+            .maxWithOrNull(
+                compareBy<Voice> { it.quality }
+                    .thenByDescending { it.latency }
+            )
+    }
+
     private fun applySavedTtsSettings() {
         val engine = tts ?: return
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -405,8 +439,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val pitch = prefs.getFloat(PREF_PITCH, DEFAULT_PITCH)
 
         engine.language = Locale.JAPAN
-        val selectedVoice = engine.voices
-            ?.firstOrNull { it.name == voiceName && it.locale.language == Locale.JAPANESE.language }
+        val voices = sortedJapaneseVoices()
+        val selectedVoice = voices.firstOrNull { it.name == voiceName } ?: bestHumanVoice(voices)
         if (selectedVoice != null) engine.voice = selectedVoice
         engine.setSpeechRate(rate)
         engine.setPitch(pitch)
