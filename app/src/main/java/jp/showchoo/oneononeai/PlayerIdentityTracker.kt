@@ -90,6 +90,26 @@ class PlayerIdentityTracker(
         val ta = a!!
         val tb = b!!
 
+        val closeCluster =
+            observations.size >= 2 &&
+                hypot(
+                    (centerX(observations[0].box) - centerX(observations[1].box)).toDouble(),
+                    (centerY(observations[0].box) - centerY(observations[1].box)).toDouble()
+                ).toFloat() < 0.14f
+
+        if (closeCluster) {
+            val colorResolvable =
+                ta.color != null &&
+                    tb.color != null &&
+                    observations[0].color != null &&
+                    observations[1].color != null
+
+            if (!colorResolvable) {
+                onDebugEvent("PLAYER_IDS_HELD crossing_cluster=true")
+                return
+            }
+        }
+
         var bestA: Observation? = null
         var bestB: Observation? = null
         var bestCost = Float.MAX_VALUE
@@ -117,8 +137,8 @@ class PlayerIdentityTracker(
         val assignmentClear =
             bestA != null &&
                 bestB != null &&
-                bestCost < 0.88f &&
-                (secondBestCost == Float.MAX_VALUE || secondBestCost - bestCost > 0.035f)
+                bestCost < 0.82f &&
+                (secondBestCost == Float.MAX_VALUE || secondBestCost - bestCost > 0.055f)
 
         if (assignmentClear) {
             updateTrack(ta, bestA!!, nowMs)
@@ -224,11 +244,15 @@ class PlayerIdentityTracker(
             track.color = if (old == null) {
                 obs.color.copyOf()
             } else {
-                floatArrayOf(
-                    old[0] * 0.90f + obs.color[0] * 0.10f,
-                    old[1] * 0.90f + obs.color[1] * 0.10f,
-                    old[2] * 0.90f + obs.color[2] * 0.10f
-                )
+                if (colorDistance(old, obs.color) < 0.18f) {
+                    floatArrayOf(
+                        old[0] * 0.98f + obs.color[0] * 0.02f,
+                        old[1] * 0.98f + obs.color[1] * 0.02f,
+                        old[2] * 0.98f + obs.color[2] * 0.02f
+                    )
+                } else {
+                    old
+                }
             }
         }
     }
