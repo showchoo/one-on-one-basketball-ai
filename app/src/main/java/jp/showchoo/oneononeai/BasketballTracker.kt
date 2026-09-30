@@ -233,10 +233,16 @@ class BasketballTracker(
             ?.id
     }
 
-    private fun addBallSample(x: Float, y: Float, nowMs: Long) {
-        ballHistory += BallSample(x, y, nowMs)
+    private fun addBallSample(
+        x: Float,
+        y: Float,
+        nowMs: Long,
+        source: String,
+        score: Float
+    ) {
+        ballHistory += BallSample(x, y, nowMs, source, score)
         pruneBallHistory(nowMs)
-        while (ballHistory.size > 20) ballHistory.removeAt(0)
+        while (ballHistory.size > 24) ballHistory.removeAt(0)
     }
 
     private fun pruneBallHistory(nowMs: Long) {
@@ -256,9 +262,9 @@ class BasketballTracker(
 
         // 手動設定したリング矩形は実リングより大きめなので、
         // 中心線を基準に「上→下」の軌道を判定する。
-        val aboveThreshold = hoopCenterY - maxOf(hoop.height() * 0.15f, 0.006f)
-        val belowThreshold = hoopCenterY + maxOf(hoop.height() * 0.22f, 0.009f)
-        val approachTop = hoop.top - maxOf(hoop.height() * 3.0f, 0.05f)
+        val aboveThreshold = hoopCenterY + maxOf(hoop.height() * 0.05f, 0.004f)
+        val belowThreshold = hoopCenterY + maxOf(hoop.height() * 0.18f, 0.008f)
+        val approachTop = hoop.top - maxOf(hoop.height() * 4.0f, 0.065f)
 
         when (hoopState) {
             HoopState.WAIT_ABOVE -> {
@@ -291,7 +297,7 @@ class BasketballTracker(
                     return
                 }
 
-                val minimumDrop = maxOf(hoop.height() * 0.30f, 0.012f)
+                val minimumDrop = maxOf(hoop.height() * 0.18f, 0.008f)
                 val crossedDownward =
                     inLaneX &&
                         y >= belowThreshold &&
@@ -299,7 +305,7 @@ class BasketballTracker(
 
                 if (crossedDownward) {
                     val hadAboveSample = ballHistory.any { sample ->
-                        sample.timeMs >= armedAtMs - 250L &&
+                        sample.timeMs >= armedAtMs - 350L &&
                             sample.timeMs <= nowMs &&
                             sample.x in laneLeft..laneRight &&
                             sample.y <= aboveThreshold
