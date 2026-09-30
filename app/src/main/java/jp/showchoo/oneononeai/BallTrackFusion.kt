@@ -36,6 +36,8 @@ class BallTrackFusion(
     private var lastSource = ""
     private var pending: Pending? = null
     private var searchIndex = 0
+    private var motionSearchIndex = 0
+    private var unlockedSearchCount = 0
 
     companion object {
         private const val PREDICT_VISIBLE_MS = 360L
@@ -53,6 +55,8 @@ class BallTrackFusion(
         lastSource = ""
         pending = null
         searchIndex = 0
+        motionSearchIndex = 0
+        unlockedSearchCount = 0
     }
 
     @Synchronized
@@ -207,11 +211,21 @@ class BallTrackFusion(
             )
         }
 
-        val motion = motionProposals.firstOrNull()
-        if (motion != null) {
+        // v0.5.1 accidentally inspected only motionProposals.firstOrNull().
+        // Player limbs often outrank the ball, so candidates 2-4 must also
+        // get a chance. Periodically force contextual search so constant
+        // player motion cannot starve PLAYER/HOOP/TILE search forever.
+        val motionPoolSize = minOf(4, motionProposals.size)
+        val forceContextScan = unlockedSearchCount % 5 == 4
+        unlockedSearchCount = (unlockedSearchCount + 1) % 100000
+
+        if (motionPoolSize > 0 && !forceContextScan) {
+            val motionIndex = motionSearchIndex % motionPoolSize
+            motionSearchIndex = (motionSearchIndex + 1) % 100000
+            val motion = motionProposals[motionIndex]
             return SearchRoi(
                 motion.roi,
-                "MOTION"
+                "MOTION_${motionIndex + 1}"
             )
         }
 
