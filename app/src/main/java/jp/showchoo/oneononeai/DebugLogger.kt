@@ -21,7 +21,7 @@ class DebugLogger(context: Context) {
 
     init {
         logDir.mkdirs()
-        currentFile = File(logDir, "basketball_debug_${fileNameFormat.format(Date())}.csv")
+        currentFile = File(logDir, "BasketballAI_Log_${fileNameFormat.format(Date())}.csv")
         writer = BufferedWriter(FileWriter(currentFile, true))
         writer?.write(
             "timestamp,event_type,status,inference_ms,detection_count," +
