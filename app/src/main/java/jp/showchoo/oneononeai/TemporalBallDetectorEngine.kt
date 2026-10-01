@@ -40,7 +40,7 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         private const val CHANNELS_PER_FRAME = 3
         private const val OUTPUT_FRAME_INDEX = 2
         private const val LOGIT_THRESHOLD = 0.0f // sigmoid(0) = 0.5
-        private const val MIN_FRAME_INTERVAL_MS = 90L
+        private const val MIN_FRAME_INTERVAL_MS = 33L
 
         private val MEAN = floatArrayOf(0.485f, 0.456f, 0.406f)
         private val STD = floatArrayOf(0.229f, 0.224f, 0.225f)
@@ -55,6 +55,8 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
         val rawPeakY: Float,
         val blobPixels: Int,
         val backend: String,
+        val frameDt01Ms: Long,
+        val frameDt12Ms: Long,
         val captureTimeMs: Long,
         val imageWidth: Int,
         val imageHeight: Int
@@ -245,6 +247,8 @@ class TemporalBallDetectorEngine(context: Context) : AutoCloseable {
             rawPeakY = rawPeakNorm.second,
             blobPixels = component?.pixels ?: 0,
             backend = backendName,
+            frameDt01Ms = frames[1].captureTimeMs - frames[0].captureTimeMs,
+            frameDt12Ms = frames[2].captureTimeMs - frames[1].captureTimeMs,
             captureTimeMs = latest.captureTimeMs,
             imageWidth = latest.imageWidth,
             imageHeight = latest.imageHeight
