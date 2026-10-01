@@ -1025,6 +1025,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                     "; score=" + (det?.score ?: 0f) +
                                     "; inferenceMs=" + packet.result.inferenceMs +
                                     "; backend=" + packet.result.backend +
+                                    "; frameDt01Ms=" + packet.result.frameDt01Ms +
+                                    "; frameDt12Ms=" + packet.result.frameDt12Ms +
                                     "; maxHeat=" + packet.result.maxHeat +
                                     "; rawPeak=" + packet.result.rawPeakProbability +
                                     "; rawPeakXY=" +
@@ -1210,7 +1212,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             }
 
                             perfText.text =
-                                "v0.7.2 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.3 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
