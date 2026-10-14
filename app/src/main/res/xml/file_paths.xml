@@ -3,6 +3,9 @@
     <external-files-path
         name="debug_logs"
         path="debug_logs/" />
+    <external-files-path
+        name="training_exports"
+        path="training_exports/" />
     <files-path
         name="internal_files"
         path="." />
