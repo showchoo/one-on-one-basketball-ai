@@ -123,6 +123,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var controlsToggleButton: Button
     private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
+    private lateinit var trainingRecorder: TrainingFrameRecorder
+    private lateinit var trainingCaptureButton: Button
+    private lateinit var trainingExportButton: Button
     private lateinit var mcVoicePack: McVoicePack
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -167,6 +170,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
 
         debugLogger = DebugLogger(applicationContext)
+        trainingRecorder = TrainingFrameRecorder(applicationContext)
         mcVoicePack = McVoicePack(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -332,6 +336,46 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.debugLogButton).setOnClickListener {
             shareDebugLog()
         }
+
+
+        trainingCaptureButton = findViewById(R.id.trainingCaptureButton)
+        trainingExportButton = findViewById(R.id.trainingExportButton)
+        trainingCaptureButton.setOnClickListener {
+            if (trainingRecorder.isRecording) {
+                trainingRecorder.stop()
+                debugLogger.logEvent(
+                    "TRAINING_CAPTURE_STOP",
+                    detail = "saved=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
+                )
+                statusText.text = "学習用画像 ${trainingRecorder.savedCount}枚 保存済み"
+                updateTrainingCaptureButton()
+            } else {
+                AlertDialog.Builder(this)
+                    .setTitle("学習用画像の収集")
+                    .setMessage(
+                        "カメラ映像を約0.5秒おきに端末内へ保存します。人物の顔や周囲の人も" +
+                            "映るため、撮影対象者の了承を得てください。画像は自動送信されません。"
+                    )
+                    .setPositiveButton("収集開始") { _, _ ->
+                        runCatching { trainingRecorder.start() }
+                            .onSuccess { dir ->
+                                debugLogger.logEvent(
+                                    "TRAINING_CAPTURE_START",
+                                    detail = "session=${dir.name}; intervalMs=500"
+                                )
+                                statusText.text = "学習用画像を収集中（タップで停止）"
+                                updateTrainingCaptureButton()
+                            }
+                            .onFailure { e ->
+                                debugLogger.logEvent("TRAINING_CAPTURE_ERROR", detail = e.toString())
+                                statusText.text = "学習収集の開始に失敗"
+                            }
+                    }
+                    .setNegativeButton("キャンセル", null)
+                    .show()
+            }
+        }
+        trainingExportButton.setOnClickListener { shareTrainingZip() }
 
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
@@ -864,6 +908,62 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+
+    private fun updateTrainingCaptureButton() {
+        if (!::trainingCaptureButton.isInitialized) return
+        val label = if (trainingRecorder.isRecording) {
+            "■ 収集中 ${trainingRecorder.savedCount}枚"
+        } else {
+            "● 学習収集開始"
+        }
+        if (trainingCaptureButton.text.toString() != label) trainingCaptureButton.text = label
+    }
+
+    private fun shareTrainingZip() {
+        if (!trainingRecorder.hasSession) {
+            statusText.text = "先に学習用画像を収集してください"
+            return
+        }
+        trainingRecorder.stop()
+        updateTrainingCaptureButton()
+        trainingExportButton.isEnabled = false
+        statusText.text = "学習用ZIP生成中…"
+        debugLogger.logEvent(
+            "TRAINING_ZIP_REQUEST",
+            detail = "frames=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
+        )
+        trainingRecorder.exportZip { result ->
+            runOnUiThread {
+                trainingExportButton.isEnabled = true
+                result.onSuccess { file ->
+                    try {
+                        val uri = FileProvider.getUriForFile(
+                            this, "$packageName.fileprovider", file
+                        )
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/zip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            putExtra(Intent.EXTRA_SUBJECT, "1on1 AI 学習用画像")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        debugLogger.logEvent(
+                            "TRAINING_ZIP_READY",
+                            detail = "file=${file.name}; bytes=${file.length()}"
+                        )
+                        statusText.text = "学習用ZIPを共有できます"
+                        startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
+                    } catch (e: Exception) {
+                        debugLogger.logEvent("TRAINING_ZIP_SHARE_ERROR", detail = e.toString())
+                        statusText.text = "ZIP共有に失敗"
+                    }
+                }.onFailure { e ->
+                    debugLogger.logEvent("TRAINING_ZIP_ERROR", detail = e.toString())
+                    statusText.text = "ZIP作成失敗: ${e.javaClass.simpleName}"
+                }
+            }
+        }
+    }
+
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -902,6 +1002,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val buffer = image.planes[0].buffer
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
+                    trainingRecorder.captureIfDue(bitmap, rotationDegrees, frameTime)
 
                     // v0.7: keep a dense three-frame temporal window even when
                     // the previous inference is still running.
@@ -1211,8 +1312,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 "BALL SEARCH"
                             }
 
+                            updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.4 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.5 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
@@ -1372,6 +1474,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         debugLogger.logEvent("APP_END", scoreA = game.scoreA, scoreB = game.scoreB)
         debugLogger.close()
+        trainingRecorder.close()
         super.onDestroy()
         cameraExecutor.shutdown()
         yoloExecutor.shutdown()
