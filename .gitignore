@@ -8,3 +8,10 @@ app/src/main/assets/*.tflite
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Never upload private training photos, labels or exported model checkpoints.
+ml_data/
+private_training_data/
+ml_runs/
+*.pth
+*.ckpt
