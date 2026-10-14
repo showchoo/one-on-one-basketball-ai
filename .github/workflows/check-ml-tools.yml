@@ -1,0 +1,28 @@
+name: Test Private Training Data Pipeline
+
+on:
+  pull_request:
+    paths:
+      - "ml/**"
+      - ".github/workflows/check-ml-tools.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ml/**"
+      - ".github/workflows/check-ml-tools.yml"
+  workflow_dispatch:
+
+jobs:
+  test-data-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install image validator
+        run: python -m pip install "Pillow>=10,<13"
+      - name: Run ZIP, label isolation and COCO export tests
+        run: python -m unittest discover -s ml/tests -v
+      - name: Syntax-check all ML scripts
+        run: python -m compileall -q ml
