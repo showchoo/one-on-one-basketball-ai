@@ -5,6 +5,15 @@ It does not train a model, and it does not claim the ball is already recognized.
 
 ## On-device instructions
 
+v0.7.6: Press **START** and confirm **両方開始** to start BOTH game tracking
+and training-frame capture at once. Set hoop / 3P calibration first for
+scoring evaluation. The image capture is opt-in and confirmation is required.
+To finish, open **操作を開く**, tap **■ 収集中 N枚**, then **学習ZIP共有**.
+**RESET** also stops capture without deleting its images. Share the ZIP
+before starting another session. **画像のみ収集** remains available if you
+want pictures without starting a game.
+
+
 1. Install v0.7.5 on the Galaxy S20+ and give camera permission.
 2. Position the phone on the fixed tripod so the full half-court is visible.
 3. Open **操作を開く** and tap **● 学習収集開始**. Read the privacy notice and tap **収集開始**.
