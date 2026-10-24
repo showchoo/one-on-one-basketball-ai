@@ -126,6 +126,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var trainingRecorder: TrainingFrameRecorder
     private lateinit var trainingCaptureButton: Button
     private lateinit var trainingExportButton: Button
+    private var trainingZipPrepared = false
     private lateinit var mcVoicePack: McVoicePack
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -342,37 +343,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         trainingExportButton = findViewById(R.id.trainingExportButton)
         trainingCaptureButton.setOnClickListener {
             if (trainingRecorder.isRecording) {
-                trainingRecorder.stop()
-                debugLogger.logEvent(
-                    "TRAINING_CAPTURE_STOP",
-                    detail = "saved=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
-                )
-                statusText.text = "学習用画像 ${trainingRecorder.savedCount}枚 保存済み"
-                updateTrainingCaptureButton()
+                stopTrainingCapture()
+            } else if (hasUnexportedTraining()) {
+                promptExportPreviousTraining()
             } else {
-                AlertDialog.Builder(this)
-                    .setTitle("学習用画像の収集")
-                    .setMessage(
-                        "カメラ映像を約0.5秒おきに端末内へ保存します。人物の顔や周囲の人も" +
-                            "映るため、撮影対象者の了承を得てください。画像は自動送信されません。"
-                    )
-                    .setPositiveButton("収集開始") { _, _ ->
-                        runCatching { trainingRecorder.start() }
-                            .onSuccess { dir ->
-                                debugLogger.logEvent(
-                                    "TRAINING_CAPTURE_START",
-                                    detail = "session=${dir.name}; intervalMs=500"
-                                )
-                                statusText.text = "学習用画像を収集中（タップで停止）"
-                                updateTrainingCaptureButton()
-                            }
-                            .onFailure { e ->
-                                debugLogger.logEvent("TRAINING_CAPTURE_ERROR", detail = e.toString())
-                                statusText.text = "学習収集の開始に失敗"
-                            }
-                    }
-                    .setNegativeButton("キャンセル", null)
-                    .show()
+                confirmTrainingCapture(startGame = false)
             }
         }
         trainingExportButton.setOnClickListener { shareTrainingZip() }
@@ -399,6 +374,105 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         }
         findViewById<Button>(R.id.startButton).setOnClickListener {
+            when {
+                trainingRecorder.isRecording -> startGameSession()
+                hasUnexportedTraining() -> promptExportPreviousTraining()
+                else -> confirmTrainingCapture(startGame = true)
+            }
+        }
+        findViewById<Button>(R.id.resetButton).setOnClickListener {
+            stopTrainingCapture()
+            debugLogger.logEvent("RESET_PRESSED", scoreA = game.scoreA, scoreB = game.scoreB)
+            game.reset()
+            tracker.resetSession()
+            ballFusion.reset()
+            ballContextTracker.reset()
+            ballSearchPlanner.reset()
+            motionBallProposer.reset()
+            playerIdentityTracker.reset()
+            commentary.reset()
+            tts?.stop()
+            setControlsExpanded(true)
+            statusText.text = "SETUP / リセットしました"
+        }
+        findViewById<Button>(R.id.a1Button).setOnClickListener { addManualScore('A', 1) }
+        findViewById<Button>(R.id.a2Button).setOnClickListener { addManualScore('A', 2) }
+        findViewById<Button>(R.id.b1Button).setOnClickListener { addManualScore('B', 1) }
+        findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
+    }
+
+    // A previous captured session stays accessible until a ZIP has been prepared.
+    // Never silently replace its shareable session on another START press.
+    private fun hasUnexportedTraining(): Boolean =
+        trainingRecorder.hasSession &&
+            trainingRecorder.savedCount > 0 &&
+            !trainingZipPrepared
+
+    private fun promptExportPreviousTraining() {
+        AlertDialog.Builder(this)
+            .setTitle("前回の画像を保存してください")
+            .setMessage(
+                "前回収集した${trainingRecorder.savedCount}枚がまだZIP共有されていません。" +
+                    "先に「学習ZIP共有」でGoogle Driveへ保存してから次の撮影を始めてください。"
+            )
+            .setPositiveButton("学習ZIP共有") { _, _ -> shareTrainingZip() }
+            .setNegativeButton("戻る", null)
+            .show()
+    }
+
+    private fun confirmTrainingCapture(startGame: Boolean) {
+        AlertDialog.Builder(this)
+            .setTitle(if (startGame) "試合と画像収集を開始" else "学習用画像の収集")
+            .setMessage(
+                "カメラ映像を約0.5秒おきに端末へ保存します。" +
+                    "人物の顔や周囲の人も映ります。撮影対象者の了承を確認してください。" +
+                    "画像は自動送信されません。"
+            )
+            .setPositiveButton(if (startGame) "両方開始" else "収集開始") { _, _ ->
+                if (beginTrainingCapture() && startGame) {
+                    startGameSession()
+                }
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
+    }
+
+    private fun beginTrainingCapture(): Boolean {
+        return runCatching { trainingRecorder.start() }
+            .fold(
+                onSuccess = { dir ->
+                    trainingZipPrepared = false
+                    debugLogger.logEvent(
+                        "TRAINING_CAPTURE_START",
+                        detail = "session=${dir.name}; intervalMs=500"
+                    )
+                    statusText.text = "学習用画像を収集中（停止は「操作を開く」）"
+                    updateTrainingCaptureButton()
+                    true
+                },
+                onFailure = { error ->
+                    debugLogger.logEvent(
+                        "TRAINING_CAPTURE_ERROR",
+                        detail = error.toString()
+                    )
+                    statusText.text = "学習収集開始に失敗（STARTは未実行）"
+                    false
+                }
+            )
+    }
+
+    private fun stopTrainingCapture() {
+        if (!trainingRecorder.isRecording) return
+        trainingRecorder.stop()
+        debugLogger.logEvent(
+            "TRAINING_CAPTURE_STOP",
+            detail = "saved=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
+        )
+        statusText.text = "学習画像${trainingRecorder.savedCount}枚を保存。次は学習ZIP共有"
+        updateTrainingCaptureButton()
+    }
+
+    private fun startGameSession() {
             tracker.resetSession()
             ballFusion.reset()
             ballContextTracker.reset()
@@ -421,25 +495,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 tracker.threePointLine.size >= 2 -> "LIVE / 自動1・2点判定"
                 else -> "LIVE / 3P未設定・1点固定"
             }
-        }
-        findViewById<Button>(R.id.resetButton).setOnClickListener {
-            debugLogger.logEvent("RESET_PRESSED", scoreA = game.scoreA, scoreB = game.scoreB)
-            game.reset()
-            tracker.resetSession()
-            ballFusion.reset()
-            ballContextTracker.reset()
-            ballSearchPlanner.reset()
-            motionBallProposer.reset()
-            playerIdentityTracker.reset()
-            commentary.reset()
-            tts?.stop()
-            setControlsExpanded(true)
-            statusText.text = "SETUP / リセットしました"
-        }
-        findViewById<Button>(R.id.a1Button).setOnClickListener { addManualScore('A', 1) }
-        findViewById<Button>(R.id.a2Button).setOnClickListener { addManualScore('A', 2) }
-        findViewById<Button>(R.id.b1Button).setOnClickListener { addManualScore('B', 1) }
-        findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
     }
 
     private fun setControlsExpanded(expanded: Boolean) {
@@ -952,6 +1007,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         )
                         statusText.text = "学習用ZIPを共有できます"
                         startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
+                        trainingZipPrepared = true
                     } catch (e: Exception) {
                         debugLogger.logEvent("TRAINING_ZIP_SHARE_ERROR", detail = e.toString())
                         statusText.text = "ZIP共有に失敗"
@@ -1314,7 +1370,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.5 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.6 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
