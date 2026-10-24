@@ -319,7 +319,7 @@
                     style="@style/Widget.OneOnOneAI.Button.Secondary"
                     android:layout_width="160dp"
                     android:layout_height="42dp"
-                    android:text="● 学習収集開始"
+                    android:text="● 画像のみ収集"
                     android:textColor="@color/basketball_orange"
                     app:strokeColor="@color/basketball_orange" />
 
