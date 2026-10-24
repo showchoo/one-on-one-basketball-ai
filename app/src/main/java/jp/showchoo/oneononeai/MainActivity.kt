@@ -969,7 +969,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val label = if (trainingRecorder.isRecording) {
             "■ 収集中 ${trainingRecorder.savedCount}枚"
         } else {
-            "● 学習収集開始"
+            "● 画像のみ収集"
         }
         if (trainingCaptureButton.text.toString() != label) trainingCaptureButton.text = label
     }
