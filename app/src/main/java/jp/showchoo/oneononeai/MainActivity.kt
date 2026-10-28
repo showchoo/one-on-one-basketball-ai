@@ -24,11 +24,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -89,6 +91,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Volatile private var ballDetector: BallRoiDetectorEngine? = null
     @Volatile private var temporalBallDetector: TemporalBallDetectorEngine? = null
     private var analysisBitmap: Bitmap? = null
+    // CameraX RGBA frames are often tightly packed, but rowStride is
+    // device dependent. Reuse buffers only when row padding exists.
+    private var packedRgba: ByteBuffer? = null
+    private var packedRgbaScratch = ByteArray(0)
+    private var cameraLayoutReported = false
 
     private lateinit var ballFusion: BallTrackFusion
     private lateinit var ballContextTracker: BallContextTracker
@@ -1028,6 +1035,54 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+
+    /**
+     * Copy CameraX RGBA_8888 pixels while honoring PlaneProxy.rowStride.
+     * Bitmap.copyPixelsFromBuffer() assumes contiguous rows. Copying padded
+     * RGBA rows directly can corrupt detector input and training photos.
+     *
+     * Called only by cameraExecutor. The tightly packed case keeps the
+     * original fast path with no additional allocation.
+     */
+    private fun copyRgbaToBitmap(image: ImageProxy, bitmap: Bitmap) {
+        val plane = image.planes.first()
+        val bytesPerRow = image.width * 4
+        val stride = plane.rowStride
+        require(plane.pixelStride == 4 && stride >= bytesPerRow) {
+            "Unexpected RGBA pixel/row stride: ${plane.pixelStride}/$stride"
+        }
+        if (!cameraLayoutReported) {
+            cameraLayoutReported = true
+            debugLogger.logEvent(
+                "CAMERA_PIXEL_LAYOUT",
+                detail = "width=${image.width}; height=${image.height}; " +
+                    "pixelStride=${plane.pixelStride}; rowStride=$stride; " +
+                    "padded=${stride != bytesPerRow}"
+            )
+        }
+        val source = plane.buffer.duplicate()
+        source.rewind()
+        if (stride == bytesPerRow) {
+            bitmap.copyPixelsFromBuffer(source)
+            return
+        }
+
+        val required = bytesPerRow * image.height
+        val packed = packedRgba?.takeIf { it.capacity() >= required }
+            ?: ByteBuffer.allocateDirect(required).also { packedRgba = it }
+        if (packedRgbaScratch.size < bytesPerRow) {
+            packedRgbaScratch = ByteArray(bytesPerRow)
+        }
+        packed.clear()
+        for (y in 0 until image.height) {
+            source.position(y * stride)
+            source.get(packedRgbaScratch, 0, bytesPerRow)
+            packed.put(packedRgbaScratch, 0, bytesPerRow)
+        }
+        packed.flip()
+        bitmap.copyPixelsFromBuffer(packed)
+    }
+
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -1063,9 +1118,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     val motionProposals = motionBallProposer.update(image)
 
-                    val buffer = image.planes[0].buffer
-                    buffer.rewind()
-                    bitmap.copyPixelsFromBuffer(buffer)
+                    copyRgbaToBitmap(image, bitmap)
                     val wasCapturing = trainingRecorder.isRecording
                     trainingRecorder.captureIfDue(bitmap, rotationDegrees, frameTime)
                     if (wasCapturing && !trainingRecorder.isRecording &&
@@ -1416,7 +1469,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.10 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.11 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
