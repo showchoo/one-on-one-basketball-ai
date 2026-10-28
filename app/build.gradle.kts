@@ -20,8 +20,8 @@ android {
         applicationId = "jp.showchoo.oneononeai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.7.9"
+        versionCode = 29
+        versionName = "0.7.10"
     }
 
     buildTypes {
