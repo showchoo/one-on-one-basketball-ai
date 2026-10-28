@@ -37,6 +37,29 @@ Only ingest the canonical ZIP listed for each unique session.
 basketball is labeled, any model has been trained, or detector quality is acceptable.
 Sessions shot at the same court and on the same day are not independent environments
 for reliable deployment validation. Keep the original images and labels out of GitHub.
+## One-command private-court preparation (recommended)
+
+Download the October 28 Drive ZIP files to a private Windows folder such as
+`D:\CourtCaptures`. Copies of the same session are okay; the tool deduplicates them.
+
+From the repository root, run:
+
+    python -m ml.prepare_direct_court "D:\CourtCaptures" --output private_training_data/direct_court_20261028 --per-session 120
+
+This performs full ZIP CRC and JPEG checks, rejects malformed manifests,
+deduplicates by session manifest, safely ingests each unique real-court
+capture and writes `review_queue.csv` under each session. A JSON metadata
+report is saved in the output folder. It leaves the original ZIPs untouched.
+If any archive fails validation, it will not silently continue training.
+
+Use `--audit-only` to check the archives without extracting any images.
+Keep this output in the gitignored private_training_data directory.
+To label each session's queue, run
+
+    python ml/label_ball.py private_training_data/direct_court_20261028/sessions/capture_<utc_ms> --queue private_training_data/direct_court_20261028/sessions/capture_<utc_ms>/review_queue.csv
+
+All label decisions still require human confirmation. Model training and
+Android integration are separate steps after verified labels and split export.
 ## Pipeline
 
 ### 1. Ingest safely, classifying source domain
