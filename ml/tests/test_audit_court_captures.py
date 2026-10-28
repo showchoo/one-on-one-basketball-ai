@@ -78,5 +78,40 @@ class AuditCapturesTests(unittest.TestCase):
             self.assertIn("manifest", report["failures"][0]["error"].lower())
 
 
+    def test_same_manifest_but_modified_frame_is_not_silent_duplicate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            original = self.make_capture(root, "original.zip")
+            altered = root / "altered.zip"
+            # Same manifest, but a different perfectly valid JPEG in the
+            # second export. ZIP CRCs are both valid.
+            changed = io.BytesIO()
+            Image.new("RGB", (64, 48), (220, 10, 15)).save(
+                changed, format="JPEG"
+            )
+            with zipfile.ZipFile(original, "r") as source:
+                names = source.namelist()
+                with zipfile.ZipFile(altered, "w") as target:
+                    for name in names:
+                        content = source.read(name)
+                        if name.startswith("images/") and "frame_00002_" in name:
+                            content = changed.getvalue()
+                        target.writestr(name, content)
+            details_a = inspect_capture(original, verify_jpegs=True)
+            details_b = inspect_capture(altered, verify_jpegs=True)
+            self.assertEqual(
+                details_a["manifest_sha256"], details_b["manifest_sha256"]
+            )
+            self.assertNotEqual(
+                details_a["image_content_sha256"],
+                details_b["image_content_sha256"]
+            )
+            result = audit([original, altered], verify_jpegs=True)
+            self.assertEqual(result["readable_zip_count"], 2)
+            self.assertEqual(result["unique_session_count"], 0)
+            self.assertFalse(result["ready_for_annotation"])
+            self.assertIn("image bytes", result["failures"][0]["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
