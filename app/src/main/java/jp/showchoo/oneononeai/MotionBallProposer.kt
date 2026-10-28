@@ -38,12 +38,16 @@ class MotionBallProposer {
         private const val MAX_BOX = 20
     }
 
+    // RESET runs on the UI thread while update() runs on the CameraX analyzer.
+    // Keep grid dimensions and buffers consistent during both operations.
+    @Synchronized
     fun reset() {
         previous = null
         gridW = 0
         gridH = 0
     }
 
+    @Synchronized
     fun update(image: ImageProxy): List<Proposal> {
         val plane = image.planes.firstOrNull() ?: return emptyList()
         val rawW = image.width
