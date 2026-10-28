@@ -15,7 +15,7 @@ from ml.export_verified_coco import export
 class DatasetTests(unittest.TestCase):
     def make_capture(self, where: Path, stamp: int):
         zpath = where / f"example_{stamp}.zip"
-        image = Image.new("RGB", (64, 48), (15, 45, 90))
+        image = Image.new("RGB", (64, 48), (15 + (stamp // 100000) % 200, 45, 90))
         buf = io.BytesIO()
         image.save(buf, "JPEG")
         header = [

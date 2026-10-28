@@ -60,6 +60,28 @@ To label each session's queue, run
 
 All label decisions still require human confirmation. Model training and
 Android integration are separate steps after verified labels and split export.
+## Strict verified-dataset gate (no model trained yet)
+
+After local court ZIPs have passed audit, and ball/no-ball frames have been
+human-reviewed in each private capture session, show local review progress:
+
+    python -m ml.report_label_progress private_training_data/direct_court_20261028
+
+To build COCO training, validation and test sets:
+
+    python -m ml.export_verified_coco private_training_data/direct_court_20261028 --output private_training_data/ball_coco --min-positives 20
+
+Export now refuses to proceed if any of the three session-separated splits has
+no verified ball-positive image or no verified no-ball negative; it also
+rejects non-finite boxes, altered JPEG bytes, and identical reviewed photos
+shared between different sessions. The 20-ball gate is only a minimum to
+exercise the code, **not** a scientifically adequate training dataset.
+
+Validation and test captures from one court and one day are only a smoke test.
+Production generalization requires independent courts, days, lighting and
+human-labeled shot events. Only after training and running an actual held-out
+evaluation may precision or recall be claimed.
+
 ## Pipeline
 
 ### 1. Ingest safely, classifying source domain
