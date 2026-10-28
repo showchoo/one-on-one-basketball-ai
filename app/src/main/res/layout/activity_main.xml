@@ -193,6 +193,47 @@
                 app:strokeColor="@color/basketball_orange" />
         </LinearLayout>
 
+        <!-- Capture controls stay visible even when advanced controls are collapsed. -->
+        <LinearLayout
+            android:id="@+id/captureStatusBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/captureStateText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingEnd="6dp"
+                android:text="撮影待機"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:maxLines="2"
+                android:ellipsize="end" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/finishCaptureButton"
+                style="@style/Widget.OneOnOneAI.Button.Secondary"
+                android:layout_width="105dp"
+                android:layout_height="44dp"
+                android:text="■ 撮影終了"
+                android:textColor="#FFCDCD"
+                android:visibility="gone"
+                app:strokeColor="#88D94343" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/shareCaptureButton"
+                style="@style/Widget.OneOnOneAI.Button.Secondary"
+                android:layout_width="110dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="5dp"
+                android:text="ZIPを共有"
+                android:visibility="gone" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/advancedControls"
             android:layout_width="match_parent"
