@@ -12,8 +12,23 @@ from pathlib import Path
 import cv2
 
 
-def label_session(session: Path, revisit=False):
-    rows = list(csv.DictReader((session / "index.csv").open(encoding="utf-8")))
+def label_session(session: Path, revisit=False, queue=None):
+    with (session / "index.csv").open(encoding="utf-8", newline="") as stream:
+        original_rows = list(csv.DictReader(stream))
+    if queue is None:
+        rows = original_rows
+    else:
+        with queue.open(encoding="utf-8", newline="") as stream:
+            requested = list(csv.DictReader(stream))
+        indexed = {row["filename"]: row for row in original_rows}
+        if len(indexed) != len(original_rows):
+            raise ValueError("Duplicate paths in index.csv")
+        filenames = [row["filename"] for row in requested]
+        if not filenames or len(set(filenames)) != len(filenames):
+            raise ValueError("Queue must include unique, nonempty frame names")
+        if any(name not in indexed for name in filenames):
+            raise ValueError("Queue contains frames not present in session index")
+        rows = [indexed[name] for name in filenames]
     labels = session / "labels"
     labels.mkdir(exist_ok=True)
     status_path = session / "review_status.json"
@@ -98,8 +113,10 @@ def main():
                         help="output/sessions/capture_<timestamp>")
     parser.add_argument("--revisit", action="store_true",
                         help="also review already-labeled frames")
+    parser.add_argument("--queue", type=Path,
+                        help="CSV queue from select_review_frames.py (otherwise all frames)")
     args = parser.parse_args()
-    results = label_session(args.session, args.revisit)
+    results = label_session(args.session, args.revisit, args.queue)
     summary = {kind: list(results.values()).count(kind)
                for kind in ("positive", "negative", "unclear")}
     print("Review:", summary, "- session:", args.session)
