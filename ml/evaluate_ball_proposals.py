@@ -60,8 +60,8 @@ def summarize(counts):
     tp, fp, fn, tn = (counts[k] for k in ("tp", "fp", "fn", "tn"))
     return {
         **counts,
-        "precision": round(tp/(tp+fp), 4) if tp+fp else 0.0,
-        "recall": round(tp/(tp+fn), 4) if tp+fn else 0.0,
+        "precision": round(tp/(tp+fp), 4) if tp+fp else None,
+        "recall": round(tp/(tp+fn), 4) if tp+fn else None,
         "no_ball_false_positive_rate": (
             round(counts["negative_fp"]/counts["negative_total"], 4)
             if counts["negative_total"] else None
