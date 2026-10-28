@@ -367,10 +367,10 @@
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/trainingExportButton"
                     style="@style/Widget.OneOnOneAI.Button.Secondary"
-                    android:layout_width="110dp"
+                    android:layout_width="118dp"
                     android:layout_height="42dp"
                     android:layout_marginStart="6dp"
-                    android:text="学習ZIP共有" />
+                    android:text="自動保存先設定" />
 
                 <TextView
                     android:layout_width="wrap_content"

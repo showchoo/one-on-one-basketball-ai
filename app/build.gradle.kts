@@ -20,8 +20,8 @@ android {
         applicationId = "jp.showchoo.oneononeai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.7.12"
+        versionCode = 32
+        versionName = "0.7.13"
     }
 
     buildTypes {
@@ -42,6 +42,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.google.android.material:material:1.12.0")
 
     val cameraX = "1.4.2"
