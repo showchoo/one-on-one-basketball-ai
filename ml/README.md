@@ -20,6 +20,22 @@ fast Android ball detector. It does **not** contain a trained model yet.
 - The source imagery **must remain private** and must never be committed to
   the public repository.
 
+## October 28 field diagnostics without double-counting CSV shares
+
+Each Android app session writes one growing CSV log. Sharing that CSV repeatedly
+creates multiple cumulative snapshots, which are **not** distinct recordings.
+
+Run on the trusted local PC:
+
+    python -m ml.summarize_field_logs "D:\CourtLogs\early.csv" "D:\CourtLogs\latest.csv" --report private_training_data/field_log_summary.json
+
+The parser accepts copies only when all shorter logs are exact prefixes of the
+longest log. Otherwise it refuses to combine the records. It outputs event
+totals, accepted temporal detections, peak scores, timing statistics, unique
+ZIP_READY session names, and errors associated with START/RESET. It never
+touches JPEGs or performs network requests. Zero accepted detections do not
+prove detector recall is zero, because no verified ball ground truth is present.
+
 ## October 28, 2026 direct-court capture audit
 
 Before ingesting or labeling multiple ZIPs, download them **privately** from Google Drive.
