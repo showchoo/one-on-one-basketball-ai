@@ -1370,7 +1370,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.6 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.7 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
@@ -1487,7 +1487,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 } catch (e: Exception) {
                     debugLogger.logEvent(
                         "TRACKING_ERROR",
-                        detail = e.toString()
+                        detail = e.toString() + "; trace=" +
+                            e.stackTrace.take(8).joinToString(" <- ") {
+                                "${it.className}.${it.methodName}:${it.lineNumber}"
+                            }
                     )
                     runOnUiThread {
                         perfText.text =
