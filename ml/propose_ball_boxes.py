@@ -98,7 +98,12 @@ def propose(session: Path, weights: Path, min_conf=0.04, model_factory=None):
                                imgsz=640, verbose=False)[0]
         candidates = read_ball_candidates(result, class_id)
         # Keep one strongest suggestion only. Do NOT save it as a label.
-        proposals[photo.stem] = candidates[0] if candidates else None
+        if candidates:
+            with photo.open("rb") as frame_stream:
+                digest = hashlib.file_digest(frame_stream, "sha256").hexdigest()
+            proposals[photo.stem] = {**candidates[0], "image_sha256": digest}
+        else:
+            proposals[photo.stem] = None
     output = {
         "schema_version": 1,
         "model_weights_sha256": weight_sha,
