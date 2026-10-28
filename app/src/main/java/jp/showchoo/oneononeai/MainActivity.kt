@@ -476,7 +476,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         "TRAINING_CAPTURE_START",
                         detail = "session=${dir.name}; intervalMs=500"
                     )
-                    statusText.text = "学習用画像を収集中（停止は「操作を開く」）"
+                    statusText.text = "学習用画像を収集中。画面下の「撮影終了」で停止"
                     updateTrainingCaptureButton()
                     true
                 },
