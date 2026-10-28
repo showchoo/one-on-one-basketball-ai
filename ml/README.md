@@ -60,6 +60,33 @@ To label each session's queue, run
 
 All label decisions still require human confirmation. Model training and
 Android integration are separate steps after verified labels and split export.
+## Optional offline model-assisted review (never automatic ground truth)
+
+For faster local review of the October 28 direct-court photos, install the
+optional experimental tool on your *trusted private PC*:
+
+    python -m pip install "ultralytics>=8.3,<9"
+
+After preparing the dataset, run the following for **each** capture session:
+
+    python -m ml.propose_ball_boxes private_training_data/direct_court_20261028/sessions/capture_<start_utc_ms> --weights private_training_data/models/BODD_yolov8n_0001.pt --download-e-bard
+
+This downloads **only the public E-BARD model weights** when missing. Camera
+photos remain on the local PC. The model and runtime licenses must be checked
+separately before any commercial redistribution. The script makes
+`proposals.json` with unverified bounding-box hints and the SHA-256 of the source
+frame; it never produces confirmed labels or overwrites prior hints.
+
+Review with:
+
+    python ml/label_ball.py private_training_data/direct_court_20261028/sessions/capture_<start_utc_ms> --queue private_training_data/direct_court_20261028/sessions/capture_<start_utc_ms>/review_queue.csv --proposals private_training_data/direct_court_20261028/sessions/capture_<start_utc_ms>/proposals.json
+
+In the reviewer, yellow boxes are **unverified AI hints**. Press `a` to
+**personally confirm** a correct suggestion; `b` to draw the actual ball
+box, `n` for a verified no-ball image, `u` for an uncertain image.
+A candidate must never count as human-verified solely because a model generated it.
+The reviewer checks that the proposed box belongs to the exact current JPEG.
+
 ## Strict verified-dataset gate (no model trained yet)
 
 After local court ZIPs have passed audit, and ball/no-ball frames have been
