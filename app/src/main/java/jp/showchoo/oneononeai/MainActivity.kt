@@ -375,7 +375,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         findViewById<Button>(R.id.startButton).setOnClickListener {
             when {
-                trainingRecorder.isRecording -> startGameSession()
+                trainingRecorder.isRecording -> {
+                    debugLogger.logEvent("START_IGNORED_ALREADY_CAPTURING")
+                    statusText.text = "学習画像を収集中です。STARTの再操作は不要"
+                }
                 hasUnexportedTraining() -> promptExportPreviousTraining()
                 else -> confirmTrainingCapture(startGame = true)
             }
@@ -966,10 +969,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun updateTrainingCaptureButton() {
         if (!::trainingCaptureButton.isInitialized) return
-        val label = if (trainingRecorder.isRecording) {
-            "■ 収集中 ${trainingRecorder.savedCount}枚"
-        } else {
-            "● 画像のみ収集"
+        val label = when {
+            trainingRecorder.isRecording -> "■ 収集中 ${trainingRecorder.savedCount}枚"
+            trainingRecorder.hasSession && trainingRecorder.savedCount > 0 ->
+                "✔ 保存済み ${trainingRecorder.savedCount}枚"
+            else -> "● 画像のみ収集"
         }
         if (trainingCaptureButton.text.toString() != label) trainingCaptureButton.text = label
     }
@@ -1058,7 +1062,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val buffer = image.planes[0].buffer
                     buffer.rewind()
                     bitmap.copyPixelsFromBuffer(buffer)
+                    val wasCapturing = trainingRecorder.isRecording
                     trainingRecorder.captureIfDue(bitmap, rotationDegrees, frameTime)
+                    if (wasCapturing && !trainingRecorder.isRecording &&
+                        trainingRecorder.automaticStopReason != null
+                    ) {
+                        debugLogger.logEvent(
+                            "TRAINING_CAPTURE_AUTO_STOP",
+                            detail = "reason=${trainingRecorder.automaticStopReason}; " +
+                                "frames=${trainingRecorder.savedCount}; " +
+                                "errors=${trainingRecorder.failureCount}"
+                        )
+                        runOnUiThread {
+                            statusText.text = "画像収集完了。次は学習ZIP共有"
+                            updateTrainingCaptureButton()
+                        }
+                    }
 
                     // v0.7: keep a dense three-frame temporal window even when
                     // the previous inference is still running.
@@ -1370,7 +1389,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.7 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.8 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +

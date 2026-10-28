@@ -26,6 +26,7 @@ class TrainingFrameRecorder(context: Context) {
     companion object {
         private const val FRAME_INTERVAL_MS = 500L
         private const val MAX_FRAMES = 1200
+        private const val MAX_DURATION_MS = 5L * 60L * 1000L
         private const val MAX_BYTES = 250L * 1024L * 1024L
         private const val JPEG_QUALITY = 88
     }
@@ -46,6 +47,9 @@ class TrainingFrameRecorder(context: Context) {
     @Volatile var isRecording: Boolean = false
         private set
     private var lastCaptureElapsedMs = Long.MIN_VALUE
+    private var firstFrameElapsedMs = Long.MIN_VALUE
+    @Volatile var automaticStopReason: String? = null
+        private set
 
     val savedCount: Int get() = session?.saved?.get() ?: 0
     val failureCount: Int get() = session?.failures?.get() ?: 0
@@ -73,10 +77,12 @@ class TrainingFrameRecorder(context: Context) {
                 "Captured only after explicitly enabling collection in the app.\n" +
                 "Device: $deviceName\n" +
                 "Interval: ${FRAME_INTERVAL_MS}ms; JPEG quality: $JPEG_QUALITY; " +
-                "limit: $MAX_FRAMES frames / 250 MiB.\n"
+                "limit: 5 minutes / $MAX_FRAMES frames / 250 MiB.\n"
         )
         session = Session(dir)
         lastCaptureElapsedMs = Long.MIN_VALUE
+        firstFrameElapsedMs = Long.MIN_VALUE
+        automaticStopReason = null
         isRecording = true
         return dir
     }
@@ -94,11 +100,21 @@ class TrainingFrameRecorder(context: Context) {
     @Synchronized
     fun captureIfDue(bitmap: Bitmap, rotationDegrees: Int, captureElapsedMs: Long) {
         val current = session ?: return
-        if (!isRecording || writing.get()) return
-        if (current.saved.get() >= MAX_FRAMES || current.bytes.get() >= MAX_BYTES) {
+        if (!isRecording) return
+        if (firstFrameElapsedMs == Long.MIN_VALUE) {
+            firstFrameElapsedMs = captureElapsedMs
+        }
+        if (captureElapsedMs - firstFrameElapsedMs >= MAX_DURATION_MS) {
             isRecording = false
+            automaticStopReason = "FIVE_MINUTES"
             return
         }
+        if (current.saved.get() >= MAX_FRAMES || current.bytes.get() >= MAX_BYTES) {
+            isRecording = false
+            automaticStopReason = "SIZE_OR_FRAME_LIMIT"
+            return
+        }
+        if (writing.get()) return
         if (lastCaptureElapsedMs != Long.MIN_VALUE &&
             captureElapsedMs - lastCaptureElapsedMs < FRAME_INTERVAL_MS
         ) return
