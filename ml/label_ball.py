@@ -115,7 +115,7 @@ def label_session(session: Path, revisit=False, queue=None, proposals=None):
             if key == ord("a") and proposed is not None:
                 cx, cy, bw, bh = proposed["box"]
                 label_file.write_text(
-                    f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\\n".replace("\\\\n", "\\n"),
+                    f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n",
                     encoding="utf-8"
                 )
                 statuses[key_name] = "positive"
