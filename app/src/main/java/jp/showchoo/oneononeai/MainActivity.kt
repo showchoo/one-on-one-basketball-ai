@@ -24,11 +24,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -89,6 +91,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Volatile private var ballDetector: BallRoiDetectorEngine? = null
     @Volatile private var temporalBallDetector: TemporalBallDetectorEngine? = null
     private var analysisBitmap: Bitmap? = null
+    // CameraX RGBA rows may include padding; copy to a packed buffer when needed.
+    private var packedRgba: ByteBuffer? = null
+    private var packedRgbaScratch = ByteArray(0)
+    private var cameraLayoutReported = false
 
     private lateinit var ballFusion: BallTrackFusion
     private lateinit var ballContextTracker: BallContextTracker
@@ -133,6 +139,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     // ZIP creation means the file exists on this phone; it does NOT confirm
     // completion of a Google Drive upload.
     private var trainingZipPrepared = false
+    private var trainingZipFileName: String? = null
+    private var trainingZipSizeBytes = 0L
+    private var trainingCaptureStartedAtMs = 0L
     private lateinit var mcVoicePack: McVoicePack
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -472,6 +481,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .fold(
                 onSuccess = { dir ->
                     trainingZipPrepared = false
+                    trainingZipFileName = null
+                    trainingZipSizeBytes = 0L
+                    trainingCaptureStartedAtMs = SystemClock.uptimeMillis()
                     debugLogger.logEvent(
                         "TRAINING_CAPTURE_START",
                         detail = "session=${dir.name}; intervalMs=500"
@@ -1037,13 +1049,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         shareCaptureButton.visibility =
             if (!recording && !captureFinishing && trainingRecorder.hasSession && count > 0)
                 View.VISIBLE else View.GONE
+        val elapsedSeconds = if (recording && trainingCaptureStartedAtMs > 0L) {
+            ((SystemClock.uptimeMillis() - trainingCaptureStartedAtMs).coerceAtLeast(0L) / 1000L)
+        } else 0L
+        val elapsed = "%02d:%02d".format(Locale.US, elapsedSeconds / 60, elapsedSeconds % 60)
         captureStateText.text = when {
-            captureFinishing -> "書き込み完了を確認中…"
-            recording -> "● 撮影中 ${count}枚\n保存失敗 ${errors}件"
+            captureFinishing -> "保存処理中…\nJPEG書き込み完了を確認中"
+            recording -> "● 撮影中 ${elapsed} / ${count}枚\n保存失敗 ${errors}件"
             trainingRecorder.hasSession && count > 0 && trainingZipPrepared ->
-                "✔ 端末ZIP作成済み\nDrive保存は未確認"
+                "✔ 端末に${count}枚保存\nZIP: ${trainingZipFileName ?: "作成済み"}\n" +
+                    "サイズ: ${"%.1f".format(Locale.US, trainingZipSizeBytes / 1048576.0)} MiB / Drive未確認"
             trainingRecorder.hasSession && count > 0 ->
-                "✔ 端末に${count}枚保存\nDrive保存は未確認"
+                "✔ 端末に${count}枚保存\nZIP未作成 / Drive保存は未確認"
             else -> "撮影待機"
         }
     }
@@ -1089,8 +1106,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             detail = "file=${file.name}; bytes=${file.length()}"
                         )
                         trainingZipPrepared = true
+                        trainingZipFileName = file.name
+                        trainingZipSizeBytes = file.length()
                         statusText.text =
-                            "ZIP端末保存完了（${file.length() / 1024 / 1024}MB）。Driveへの保存は未確認"
+                            "ZIP: ${file.name} / ${trainingRecorder.savedCount}枚 / " +
+                                "${"%.1f".format(Locale.US, file.length() / 1048576.0)} MiB。Drive保存は未確認"
                         updateTrainingCaptureButton()
                         startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
                     } catch (e: Exception) {
@@ -1103,6 +1123,50 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+    }
+
+
+    /**
+     * CameraX RGBA_8888 can have padded rows on some devices.
+     * Unpacking padded frames protects both training JPEGs and inference input.
+     * Called on the single camera analyzer executor.
+     */
+    private fun copyRgbaToBitmap(image: ImageProxy, bitmap: Bitmap) {
+        val plane = image.planes.first()
+        val bytesPerRow = image.width * 4
+        val stride = plane.rowStride
+        require(plane.pixelStride == 4 && stride >= bytesPerRow) {
+            "Unexpected RGBA pixel/row stride: ${plane.pixelStride}/$stride"
+        }
+        if (!cameraLayoutReported) {
+            cameraLayoutReported = true
+            debugLogger.logEvent(
+                "CAMERA_PIXEL_LAYOUT",
+                detail = "width=${image.width}; height=${image.height}; " +
+                    "pixelStride=${plane.pixelStride}; rowStride=$stride; " +
+                    "padded=${stride != bytesPerRow}"
+            )
+        }
+        val source = plane.buffer.duplicate()
+        source.rewind()
+        if (stride == bytesPerRow) {
+            bitmap.copyPixelsFromBuffer(source)
+            return
+        }
+        val required = bytesPerRow * image.height
+        val packed = packedRgba?.takeIf { it.capacity() >= required }
+            ?: ByteBuffer.allocateDirect(required).also { packedRgba = it }
+        if (packedRgbaScratch.size < bytesPerRow) {
+            packedRgbaScratch = ByteArray(bytesPerRow)
+        }
+        packed.clear()
+        for (y in 0 until image.height) {
+            source.position(y * stride)
+            source.get(packedRgbaScratch, 0, bytesPerRow)
+            packed.put(packedRgbaScratch, 0, bytesPerRow)
+        }
+        packed.flip()
+        bitmap.copyPixelsFromBuffer(packed)
     }
 
     private fun startCamera() {
@@ -1140,9 +1204,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     val motionProposals = motionBallProposer.update(image)
 
-                    val buffer = image.planes[0].buffer
-                    buffer.rewind()
-                    bitmap.copyPixelsFromBuffer(buffer)
+                    copyRgbaToBitmap(image, bitmap)
                     val wasCapturing = trainingRecorder.isRecording
                     trainingRecorder.captureIfDue(bitmap, rotationDegrees, frameTime)
                     if (wasCapturing && !trainingRecorder.isRecording &&
