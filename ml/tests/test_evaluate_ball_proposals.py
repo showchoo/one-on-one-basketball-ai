@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 from ml.evaluate_ball_proposals import (
-    box_iou_xywh, evaluate_session, evaluate_root
+    box_iou_xywh, evaluate_session, evaluate_root, summarize
 )
 
 
@@ -52,6 +52,14 @@ def make_review_session(root: Path, folder_name="capture_1"):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_undefined_metrics_are_not_misreported_as_zero(self):
+        counts = dict(tp=0, fp=0, fn=0, tn=3, positive_total=0,
+                      negative_total=3, negative_fp=0)
+        metrics = summarize(counts)
+        self.assertIsNone(metrics["precision"])
+        self.assertIsNone(metrics["recall"])
+        self.assertEqual(metrics["no_ball_false_positive_rate"], 0.0)
+
     def test_iou_geometry(self):
         self.assertEqual(box_iou_xywh([.5,.5,.1,.1], [.5,.5,.1,.1]), 1.0)
         self.assertEqual(box_iou_xywh([.5,.5,.1,.1], [.2,.2,.1,.1]), 0.0)
