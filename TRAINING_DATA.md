@@ -5,10 +5,10 @@ It does not train a model, and it does not claim the ball is already recognized.
 
 ## On-device instructions
 
-v0.7.6: Press **START** and confirm **両方開始** to start BOTH game tracking
+v0.7.8: Press **START** and confirm **両方開始** to start BOTH game tracking
 and training-frame capture at once. Set hoop / 3P calibration first for
 scoring evaluation. The image capture is opt-in and confirmation is required.
-To finish, open **操作を開く**, tap **■ 収集中 N枚**, then **学習ZIP共有**.
+Collection stops automatically after 5 minutes (or an earlier storage/size cap). You can stop early with **操作を開く** → **■ 収集中 N枚**. Then use **学習ZIP共有**. During capture, repeated **START** taps are ignored to protect the session.
 **RESET** also stops capture without deleting its images. Share the ZIP
 before starting another session. **画像のみ収集** remains available if you
 want pictures without starting a game.
@@ -29,7 +29,7 @@ want pictures without starting a game.
 - \`images/frame_*.jpg\`, \`frames.csv\`, and \`README.txt\` packaged in the ZIP.
 - \`frames.csv\`: filename, UTC epoch timestamp (milliseconds), elapsed uptime (milliseconds),
   saved width/height, applied rotation, device.
-- At most 1,200 frames or ~250 MiB per session. The camera itself continues working after
+- At most 5 minutes, 1,200 frames or ~250 MiB per session. The camera itself continues working after
   collection automatically stops.
 - A new capture creates a new session. ZIP share exports **the most recent session**.
 - Files stay on-device inside app-specific storage until the user explicitly shares them.
