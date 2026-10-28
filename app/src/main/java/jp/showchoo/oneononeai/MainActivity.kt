@@ -1118,6 +1118,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         latestYoloInferenceMs = packet.result.inferenceMs
                         latestYoloDetectionCount = packet.result.detections.size
 
+                        // Diagnose whether the independent scene detector sees
+                        // basketball candidates before fusion accepts them.
+                        // Observation only: never promote unverified YOLO
+                        // proposals to scores or a persistent ball track.
+                        val sceneBallCandidates = packet.result.detections.count {
+                            it.label == "sports ball"
+                        }
+                        val sceneHoopCandidates = packet.result.detections.count {
+                            it.label == "hoop"
+                        }
+                        val scenePlayerCandidates = packet.result.detections.count {
+                            it.label == "person"
+                        }
+                        debugLogger.logEvent(
+                            "SCENE_YOLO_RESULT",
+                            detail = "ballCandidates=${sceneBallCandidates}; " +
+                                "bestBallConfidence=${packet.result.ballConfidence}; " +
+                                "playerCandidates=${scenePlayerCandidates}; " +
+                                "hoopCandidates=${sceneHoopCandidates}; " +
+                                "inferenceMs=${packet.result.inferenceMs}; " +
+                                "acceptedForFusion=${ballFusion.isLocked(packet.receivedTimeMs)}"
+                        )
+
                         playerIdentityTracker.update(
                             detections = packet.result.detections,
                             imageWidth = packet.result.imageWidth,
@@ -1393,7 +1416,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.8 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.10 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +
