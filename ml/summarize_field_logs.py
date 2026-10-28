@@ -95,6 +95,37 @@ def summarize(paths):
         if status == "true":
             detected += 1
 
+    # v0.7.10+: independent raw scene detector diagnostics.
+    # Before this version, FRAME.ball_conf describes the fused track,
+    # and cannot be used as the raw scene model's confidence.
+    scene_scores, scene_times = [], []
+    scenes_with_ball_candidate = 0
+    scenes_forwarded_to_fusion = 0
+    malformed_scene_events = 0
+    for row in events:
+        if row["event_type"] != "SCENE_YOLO_RESULT":
+            continue
+        detail = row["detail"]
+        def extract(name):
+            match = re.search(r"(?:^|;)\s*" + re.escape(name) +
+                              r"=([^;]+)(?:;|$)", detail)
+            return match.group(1).strip() if match else None
+        try:
+            best = float(extract("bestBallConfidence"))
+            duration = int(extract("inferenceMs"))
+            ball_count = int(extract("ballCandidates"))
+            if not (0 <= best <= 1 and duration >= 0 and ball_count >= 0):
+                raise ValueError("Invalid scene YOLO diagnostic")
+        except (ValueError, TypeError):
+            malformed_scene_events += 1
+            continue
+        scene_scores.append(best)
+        scene_times.append(duration)
+        if ball_count > 0:
+            scenes_with_ball_candidate += 1
+        if extract("acceptedForFusion") == "true":
+            scenes_forwarded_to_fusion += 1
+
     capture_started = []
     archive_events = []
     for row in events:
@@ -138,6 +169,19 @@ def summarize(paths):
             "raw_peak_max": max(peaks) if peaks else None,
             "backends": dict(backend_counts),
             "warning": "Accepted detections are not ground-truth recall.",
+        },
+        "scene_yolo_model": {
+            "diagnostic_available": counts["SCENE_YOLO_RESULT"] > 0,
+            "reports": counts["SCENE_YOLO_RESULT"],
+            "parsed_reports": len(scene_scores),
+            "malformed_reports": malformed_scene_events,
+            "with_ball_candidate": (scenes_with_ball_candidate if scene_scores else None),
+            "best_ball_confidence_max": (max(scene_scores) if scene_scores else None),
+            "inference_ms_p50": percentile(scene_times, .5),
+            "already_locked_for_fusion": (
+                scenes_forwarded_to_fusion if scene_scores else None
+            ),
+            "note": "Raw scene candidates are not confirmed ball tracks or scoring accuracy.",
         },
         "capture": {
             "start_events": len(capture_started),

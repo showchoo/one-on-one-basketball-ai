@@ -29,6 +29,11 @@ Run on the trusted local PC:
 
     python -m ml.summarize_field_logs "D:\CourtLogs\early.csv" "D:\CourtLogs\latest.csv" --report private_training_data/field_log_summary.json
 
+With v0.7.10 and later logs, the summary also reports **raw scene YOLO**
+basketball candidate counts/confidence separately from accepted temporal detections.
+For earlier APKs, scene-model metrics are marked unavailable rather than
+misreported as zero. Candidate boxes are never counted as scored baskets.
+
 The parser accepts copies only when all shorter logs are exact prefixes of the
 longest log. Otherwise it refuses to combine the records. It outputs event
 totals, accepted temporal detections, peak scores, timing statistics, unique
