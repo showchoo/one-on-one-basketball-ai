@@ -84,6 +84,18 @@ To label each session's queue, run
 
 All label decisions still require human confirmation. Model training and
 Android integration are separate steps after verified labels and split export.
+## Private contact sheets for quick shot and ball triage
+
+Before labeling, review up to 30 time-balanced images on one local sheet:
+
+    python -m ml.make_review_sheets private_training_data/direct_court_20261028/sessions/capture_<start_utc_ms> --output private_training_data/direct_court_20261028/review_sheets/capture_<start_utc_ms>
+
+Sheets contain original court imagery at reduced resolution and must remain
+**private**. This preview makes it easier to find shooting sequences and
+visibility problems, but it never generates ball labels or ground truth.
+The numeric caption indexes each entry in the session's review_queue.csv.
+The tool refuses to overwrite an existing preview directory.
+
 ## Optional offline model-assisted review (never automatic ground truth)
 
 For faster local review of the October 28 direct-court photos, install the
