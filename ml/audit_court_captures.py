@@ -77,6 +77,20 @@ def inspect_capture(path: Path, verify_jpegs: bool = False) -> dict:
         if bad_crc is not None:
             raise ValueError("ZIP CRC mismatch in " + bad_crc)
 
+        # Hash actual uncompressed JPEG bytes, not just the CSV manifest.
+        # A re-export with altered frames must not be called a duplicate.
+        content_hash = hashlib.sha256()
+        for row in rows:
+            name = row["filename"]
+            name_bytes = name.encode("utf-8")
+            content_hash.update(len(name_bytes).to_bytes(4, "big"))
+            content_hash.update(name_bytes)
+            image_hash = hashlib.sha256()
+            with z.open(name) as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    image_hash.update(chunk)
+            content_hash.update(image_hash.digest())
+
         if verify_jpegs:
             for row in rows:
                 with z.open(row["filename"]) as stream:
@@ -92,6 +106,7 @@ def inspect_capture(path: Path, verify_jpegs: bool = False) -> dict:
             "zip_bytes": path.stat().st_size,
             "session_id": "capture_" + str(times[0]),
             "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+            "image_content_sha256": content_hash.hexdigest(),
             "frames": len(rows),
             "frame_start_utc": datetime.fromtimestamp(times[0] / 1000, timezone.utc).isoformat(),
             "frame_end_utc": datetime.fromtimestamp(times[-1] / 1000, timezone.utc).isoformat(),
@@ -117,9 +132,13 @@ def audit(paths, verify_jpegs=False):
         groups[result["session_id"]].append(result)
     unique = []
     for session, records in groups.items():
-        fingerprints = {r["manifest_sha256"] for r in records}
-        if len(fingerprints) != 1:
-            failures.append({"session_id": session, "error": "Conflicting manifests for same session"})
+        manifests = {r["manifest_sha256"] for r in records}
+        image_contents = {r["image_content_sha256"] for r in records}
+        if len(manifests) != 1 or len(image_contents) != 1:
+            failures.append({
+                "session_id": session,
+                "error": "Conflicting manifests or image bytes for same session",
+            })
             continue
         canonical = records[0]
         unique.append({

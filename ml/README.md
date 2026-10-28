@@ -31,6 +31,9 @@ Example (from the project root, replacing paths with actual private local files)
 
 The audit verifies manifest/image agreement, timestamp monotonicity, ZIP CRC,
 JPEG structure and dimensions (with --verify-jpegs), and duplicate session manifests.
+For files reported as duplicates, it also requires a SHA-256 fingerprint of the
+actual decompressed JPEG bytes to match. An unchanged manifest with altered
+image contents is treated as a conflict, never silently discarded.
 Only ingest the canonical ZIP listed for each unique session.
 
 `ready_for_annotation` is a metadata-only gate: it does NOT mean that the
