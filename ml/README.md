@@ -87,6 +87,25 @@ box, `n` for a verified no-ball image, `u` for an uncertain image.
 A candidate must never count as human-verified solely because a model generated it.
 The reviewer checks that the proposed box belongs to the exact current JPEG.
 
+## Offline model baseline against confirmed ball labels
+
+After at least some frames have been manually reviewed, assess how well the
+unmodified E-BARD proposal model works on those verified frames:
+
+    python -m ml.evaluate_ball_proposals private_training_data/direct_court_20261028 --report private_training_data/direct_court_20261028/proposal_baseline.json
+
+The report summarizes precision, recall, and false-positive rate for actual
+no-ball images at several confidence thresholds, using 0.50 intersection-over-union
+for correct ball localization. An incorrect ball location counts as both a
+false positive and a missed ground-truth ball; unreviewed/uncertain images are
+excluded. The output contains no photos.
+
+**Important:** These numbers would describe only labeled still frames from
+these sessions. They are NOT a measured automatic scoring accuracy, and
+capturing all sessions at a single court on one day does not establish
+independence across environments. Also compare on newly collected, genuinely
+held-out days/courts before deployment.
+
 ## Strict verified-dataset gate (no model trained yet)
 
 After local court ZIPs have passed audit, and ball/no-ball frames have been
