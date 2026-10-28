@@ -27,7 +27,7 @@ def box_iou_xywh(a, b):
     w = max(0.0, min(a_right, b_right) - max(a_left, b_left))
     h = max(0.0, min(a_bottom, b_bottom) - max(a_top, b_top))
     intersection = w * h
-    return intersection / (aw*ah + bw*bh - intersection)
+    return min(1.0, max(0.0, intersection / (aw*ah + bw*bh - intersection)))
 
 
 def confirmed_ball(session: Path, stem: str, status: str):
