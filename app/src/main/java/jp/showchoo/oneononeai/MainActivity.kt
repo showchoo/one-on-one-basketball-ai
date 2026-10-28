@@ -956,7 +956,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/csv"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "1on1 AI デバッグログ")
+                putExtra(Intent.EXTRA_SUBJECT, "1on1 AI デバッグログ - ${debugLogger.currentFile.nameWithoutExtension}")
+                putExtra(Intent.EXTRA_TITLE, debugLogger.currentFile.name)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(shareIntent, "デバッグログを共有"))
@@ -1002,7 +1003,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "application/zip"
                             putExtra(Intent.EXTRA_STREAM, uri)
-                            putExtra(Intent.EXTRA_SUBJECT, "1on1 AI 学習用画像")
+                            // Include session identity so Drive does not name unrelated
+                            // captures identically when receiving ACTION_SEND.
+                            putExtra(Intent.EXTRA_SUBJECT, "1on1 AI 学習用画像 - ${file.nameWithoutExtension}")
+                            putExtra(Intent.EXTRA_TITLE, file.name)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         debugLogger.logEvent(
