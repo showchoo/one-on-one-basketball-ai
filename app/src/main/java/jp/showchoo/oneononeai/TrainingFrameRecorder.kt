@@ -94,6 +94,26 @@ class TrainingFrameRecorder(context: Context) {
     }
 
     /**
+     * Stops capture and reports the final JPEG count only after all queued
+     * JPEG writes and frames.csv appends have finished on the serial worker.
+     * This confirms local device persistence, NOT cloud backup.
+     */
+    @Synchronized
+    fun finishCapture(onComplete: (Result<Int>) -> Unit) {
+        isRecording = false
+        val current = session
+        if (current == null) {
+            onComplete(Result.failure(IllegalStateException("No training session")))
+            return
+        }
+        runCatching {
+            worker.execute {
+                onComplete(Result.success(current.saved.get()))
+            }
+        }.onFailure { onComplete(Result.failure(it)) }
+    }
+
+    /**
      * Called from the CameraX analyzer. At most one bitmap copy is in flight;
      * JPEG compression and disk I/O take place off the analyzer thread.
      */
