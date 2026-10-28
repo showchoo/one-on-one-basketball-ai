@@ -20,6 +20,23 @@ fast Android ball detector. It does **not** contain a trained model yet.
 - The source imagery **must remain private** and must never be committed to
   the public repository.
 
+## October 28, 2026 direct-court capture audit
+
+Before ingesting or labeling multiple ZIPs, download them **privately** from Google Drive.
+Sharing the same captured session twice creates duplicate ZIPs, not extra independent sessions.
+
+Example (from the project root, replacing paths with actual private local files):
+
+    python ml/audit_court_captures.py --verify-jpegs --report private_training_data/court_audit.json "D:\court_zips\session1.zip" "D:\court_zips\session2.zip" "D:\court_zips\session3.zip"
+
+The audit verifies manifest/image agreement, timestamp monotonicity, ZIP CRC,
+JPEG structure and dimensions (with --verify-jpegs), and duplicate session manifests.
+Only ingest the canonical ZIP listed for each unique session.
+
+`ready_for_annotation` is a metadata-only gate: it does NOT mean that the
+basketball is labeled, any model has been trained, or detector quality is acceptable.
+Sessions shot at the same court and on the same day are not independent environments
+for reliable deployment validation. Keep the original images and labels out of GitHub.
 ## Pipeline
 
 ### 1. Ingest safely, classifying source domain
