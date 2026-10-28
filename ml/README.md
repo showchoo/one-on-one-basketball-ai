@@ -67,10 +67,23 @@ A replay-only diagnostic crop is supported via
 `--crop 150,2,1065,400`; those coordinates fit **only the first sample**.
 Cropped monitor frames must remain in the `screen_replay` domain.
 
-### 2. Confirm labels, including real negative examples
+### 2. Choose a smaller review queue before manually labeling
+
+Labeling every half-second image is inefficient, and nearby shots are almost duplicates.
+Once private ZIPs have been audited and ingested, produce a time-balanced
+queue for each session, with high/low/mid visual-change examples:
+
+    python ml/select_review_frames.py ml_data --per-session 120
+
+The output stays local at `ml_data/sessions/capture_*/review_queue.csv`.
+Motion score is **not a basketball detector** and does not establish correct
+positive/negative labels. It is only a reproducible frame-selection heuristic.
+Start with a manageable queue; include additional rare shooting events later.
+
+### 3. Confirm labels, including real negative examples
 
 ```powershell
-python ml/label_ball.py ml_data/sessions/capture_<start_utc_ms>
+python ml/label_ball.py ml_data/sessions/capture_<start_utc_ms> --queue ml_data/sessions/capture_<start_utc_ms>/review_queue.csv
 ```
 
 OpenCV keyboard controls: `b` draw one box around the actual ball, `n` mark
@@ -83,7 +96,7 @@ verified **no-ball** image; unknown/uncertain frames are excluded from training.
 
 If using AI to suggest boxes in the future, have them reviewed before training.
 
-### 3. Create leak-free training data
+### 4. Create leak-free training data
 
 Only after **at least three separate real-court sessions** have been collected
 and labeled (20 confirmed ball boxes is a minimal tool gate, NOT sufficient
@@ -102,7 +115,7 @@ more than 20 positives per split, near/far dribbling, fast shots, passes,
 occlusions and negative frames. Detection must be evaluated with human labels,
 precision/recall and on-device latency; candidate scores alone are inadequate.
 
-### 4. Training architecture prepared (not yet trained)
+### 5. Training architecture prepared (not yet trained)
 
 We selected **YOLOX Nano** for an initial 1-class experiment. The official
 YOLOX implementation is Apache-2.0; independently verify distribution rights
@@ -124,7 +137,7 @@ use on an Android phone. A trained YOLOX model cannot simply replace the
 existing YOLOv8 ONNX asset: **output decoding/NMS and model integration differ**.
 The Android inference path and on-device metrics are a separate follow-up.
 
-### 5. Verify the data pipeline
+### 6. Verify the data pipeline
 
 ```bash
 python -m unittest discover -s ml/tests -v
