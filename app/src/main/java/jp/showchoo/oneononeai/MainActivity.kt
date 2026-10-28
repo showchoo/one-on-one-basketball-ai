@@ -126,6 +126,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var trainingRecorder: TrainingFrameRecorder
     private lateinit var trainingCaptureButton: Button
     private lateinit var trainingExportButton: Button
+    private lateinit var captureStateText: TextView
+    private lateinit var finishCaptureButton: Button
+    private lateinit var shareCaptureButton: Button
+    @Volatile private var captureFinishing = false
+    // ZIP creation means the file exists on this phone; it does NOT confirm
+    // completion of a Google Drive upload.
     private var trainingZipPrepared = false
     private lateinit var mcVoicePack: McVoicePack
 
@@ -341,16 +347,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         trainingCaptureButton = findViewById(R.id.trainingCaptureButton)
         trainingExportButton = findViewById(R.id.trainingExportButton)
+        captureStateText = findViewById(R.id.captureStateText)
+        finishCaptureButton = findViewById(R.id.finishCaptureButton)
+        shareCaptureButton = findViewById(R.id.shareCaptureButton)
         trainingCaptureButton.setOnClickListener {
-            if (trainingRecorder.isRecording) {
-                stopTrainingCapture()
-            } else if (hasUnexportedTraining()) {
-                promptExportPreviousTraining()
-            } else {
-                confirmTrainingCapture(startGame = false)
+            when {
+                captureFinishing -> Unit
+                trainingRecorder.isRecording -> stopTrainingCapture()
+                hasPreviousTraining() -> promptExportPreviousTraining(startGame = false)
+                else -> confirmTrainingCapture(startGame = false)
             }
         }
         trainingExportButton.setOnClickListener { shareTrainingZip() }
+        finishCaptureButton.setOnClickListener { stopTrainingCapture() }
+        shareCaptureButton.setOnClickListener { shareTrainingZip() }
+        updateTrainingCaptureButton()
 
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
@@ -379,7 +390,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     debugLogger.logEvent("START_IGNORED_ALREADY_CAPTURING")
                     statusText.text = "学習画像を収集中です。STARTの再操作は不要"
                 }
-                hasUnexportedTraining() -> promptExportPreviousTraining()
+                captureFinishing -> statusText.text = "撮影画像の保存を確認中です"
+                hasPreviousTraining() -> promptExportPreviousTraining(startGame = true)
                 else -> confirmTrainingCapture(startGame = true)
             }
         }
@@ -404,23 +416,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
     }
 
-    // A previous captured session stays accessible until a ZIP has been prepared.
-    // Never silently replace its shareable session on another START press.
-    private fun hasUnexportedTraining(): Boolean =
-        trainingRecorder.hasSession &&
-            trainingRecorder.savedCount > 0 &&
-            !trainingZipPrepared
+    // A previous session must remain accessible until the user explicitly
+    // acknowledges their external backup. Opening ACTION_SEND is NOT proof.
+    private fun hasPreviousTraining(): Boolean =
+        trainingRecorder.hasSession && trainingRecorder.savedCount > 0
 
-    private fun promptExportPreviousTraining() {
-        AlertDialog.Builder(this)
-            .setTitle("前回の画像を保存してください")
-            .setMessage(
-                "前回収集した${trainingRecorder.savedCount}枚がまだZIP共有されていません。" +
-                    "先に「学習ZIP共有」でGoogle Driveへ保存してから次の撮影を始めてください。"
-            )
-            .setPositiveButton("学習ZIP共有") { _, _ -> shareTrainingZip() }
-            .setNegativeButton("戻る", null)
-            .show()
+    private fun promptExportPreviousTraining(startGame: Boolean) {
+        val count = trainingRecorder.savedCount
+        if (!trainingZipPrepared) {
+            AlertDialog.Builder(this)
+                .setTitle("前回の撮影画像が端末に残っています")
+                .setMessage(
+                    "${count}枚は端末に保存済みですが、共有用ZIPをまだ作成していません。" +
+                        "先にZIPを作成してGoogle Driveへ保存してください。"
+                )
+                .setPositiveButton("ZIPを作成・共有") { _, _ -> shareTrainingZip() }
+                .setNegativeButton("戻る", null)
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("Google Driveへの保存を確認しましたか？")
+                .setMessage(
+                    "前回の${count}枚のZIPは端末に作成済みです。" +
+                        "共有画面を開いたことだけではDriveへの保存完了は確認できません。" +
+                        "Driveのファイル一覧でZIPが存在することを確認してから次へ進んでください。"
+                )
+                .setPositiveButton("Driveで確認済み・次へ") { _, _ ->
+                    confirmTrainingCapture(startGame)
+                }
+                .setNeutralButton("ZIPを再共有") { _, _ -> shareTrainingZip() }
+                .setNegativeButton("戻る", null)
+                .show()
+        }
     }
 
     private fun confirmTrainingCapture(startGame: Boolean) {
@@ -465,14 +492,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun stopTrainingCapture() {
-        if (!trainingRecorder.isRecording) return
-        trainingRecorder.stop()
-        debugLogger.logEvent(
-            "TRAINING_CAPTURE_STOP",
-            detail = "saved=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
-        )
-        statusText.text = "学習画像${trainingRecorder.savedCount}枚を保存。次は学習ZIP共有"
-        updateTrainingCaptureButton()
+        if (!trainingRecorder.isRecording || captureFinishing) return
+        finalizeTrainingCapture()
+    }
+
+    /**
+     * Wait for all queued JPEG writes before claiming that capture completed.
+     * This checks device storage only; uploading to Drive is a later action.
+     */
+    private fun finalizeTrainingCapture(autoStopReason: String? = null) {
+        if (captureFinishing) return
+        captureFinishing = true
+        runOnUiThread {
+            statusText.text = "撮影停止中・画像の書き込み完了を確認中…"
+            updateTrainingCaptureButton()
+        }
+        trainingRecorder.finishCapture { result ->
+            runOnUiThread {
+                captureFinishing = false
+                result.onSuccess { count ->
+                    debugLogger.logEvent(
+                        if (autoStopReason != null) "TRAINING_CAPTURE_AUTO_SAVED" else "TRAINING_CAPTURE_STOP",
+                        detail = "saved=${count}; errors=${trainingRecorder.failureCount}; reason=${autoStopReason ?: "MANUAL"}"
+                    )
+                    statusText.text =
+                        "端末に${count}枚保存済み。次にZIPを作成・共有してください"
+                }.onFailure { error ->
+                    debugLogger.logEvent("TRAINING_CAPTURE_FINISH_ERROR", detail = error.toString())
+                    statusText.text = "撮影停止の確認に失敗。再撮影せずログを確認してください"
+                }
+                updateTrainingCaptureButton()
+            }
+        }
     }
 
     private fun startGameSession() {
@@ -970,16 +1021,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun updateTrainingCaptureButton() {
         if (!::trainingCaptureButton.isInitialized) return
+        val count = trainingRecorder.savedCount
+        val errors = trainingRecorder.failureCount
+        val recording = trainingRecorder.isRecording
         val label = when {
-            trainingRecorder.isRecording -> "■ 収集中 ${trainingRecorder.savedCount}枚"
-            trainingRecorder.hasSession && trainingRecorder.savedCount > 0 ->
-                "✔ 保存済み ${trainingRecorder.savedCount}枚"
+            captureFinishing -> "… 保存確認中"
+            recording -> "■ 収集中 ${count}枚"
+            trainingRecorder.hasSession && count > 0 ->
+                if (trainingZipPrepared) "✔ ZIP作成済み" else "✔ 端末保存 ${count}枚"
             else -> "● 画像のみ収集"
         }
         if (trainingCaptureButton.text.toString() != label) trainingCaptureButton.text = label
+        trainingCaptureButton.isEnabled = !captureFinishing
+        finishCaptureButton.visibility = if (recording && !captureFinishing) View.VISIBLE else View.GONE
+        shareCaptureButton.visibility =
+            if (!recording && !captureFinishing && trainingRecorder.hasSession && count > 0)
+                View.VISIBLE else View.GONE
+        captureStateText.text = when {
+            captureFinishing -> "書き込み完了を確認中…"
+            recording -> "● 撮影中 ${count}枚\n保存失敗 ${errors}件"
+            trainingRecorder.hasSession && count > 0 && trainingZipPrepared ->
+                "✔ 端末ZIP作成済み\nDrive保存は未確認"
+            trainingRecorder.hasSession && count > 0 ->
+                "✔ 端末に${count}枚保存\nDrive保存は未確認"
+            else -> "撮影待機"
+        }
     }
 
     private fun shareTrainingZip() {
+        if (captureFinishing) {
+            statusText.text = "画像の書き込み完了後に共有してください"
+            return
+        }
         if (!trainingRecorder.hasSession) {
             statusText.text = "先に学習用画像を収集してください"
             return
@@ -987,6 +1060,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         trainingRecorder.stop()
         updateTrainingCaptureButton()
         trainingExportButton.isEnabled = false
+        shareCaptureButton.isEnabled = false
         statusText.text = "学習用ZIP生成中…"
         debugLogger.logEvent(
             "TRAINING_ZIP_REQUEST",
@@ -995,6 +1069,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         trainingRecorder.exportZip { result ->
             runOnUiThread {
                 trainingExportButton.isEnabled = true
+                shareCaptureButton.isEnabled = true
                 result.onSuccess { file ->
                     try {
                         val uri = FileProvider.getUriForFile(
@@ -1013,9 +1088,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             "TRAINING_ZIP_READY",
                             detail = "file=${file.name}; bytes=${file.length()}"
                         )
-                        statusText.text = "学習用ZIPを共有できます"
-                        startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
                         trainingZipPrepared = true
+                        statusText.text =
+                            "ZIP端末保存完了（${file.length() / 1024 / 1024}MB）。Driveへの保存は未確認"
+                        updateTrainingCaptureButton()
+                        startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
                     } catch (e: Exception) {
                         debugLogger.logEvent("TRAINING_ZIP_SHARE_ERROR", detail = e.toString())
                         statusText.text = "ZIP共有に失敗"
@@ -1077,10 +1154,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 "frames=${trainingRecorder.savedCount}; " +
                                 "errors=${trainingRecorder.failureCount}"
                         )
-                        runOnUiThread {
-                            statusText.text = "画像収集完了。次は学習ZIP共有"
-                            updateTrainingCaptureButton()
-                        }
+                        finalizeTrainingCapture(trainingRecorder.automaticStopReason)
                     }
 
                     // v0.7: keep a dense three-frame temporal window even when
