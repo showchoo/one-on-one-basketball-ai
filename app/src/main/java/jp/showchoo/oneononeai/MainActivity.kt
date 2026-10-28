@@ -24,11 +24,13 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -89,6 +91,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Volatile private var ballDetector: BallRoiDetectorEngine? = null
     @Volatile private var temporalBallDetector: TemporalBallDetectorEngine? = null
     private var analysisBitmap: Bitmap? = null
+    // CameraX RGBA rows may include padding; copy to a packed buffer when needed.
+    private var packedRgba: ByteBuffer? = null
+    private var packedRgbaScratch = ByteArray(0)
+    private var cameraLayoutReported = false
 
     private lateinit var ballFusion: BallTrackFusion
     private lateinit var ballContextTracker: BallContextTracker
@@ -126,7 +132,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var trainingRecorder: TrainingFrameRecorder
     private lateinit var trainingCaptureButton: Button
     private lateinit var trainingExportButton: Button
+    private lateinit var captureStateText: TextView
+    private lateinit var finishCaptureButton: Button
+    private lateinit var shareCaptureButton: Button
+    @Volatile private var captureFinishing = false
+    // ZIP creation means the file exists on this phone; it does NOT confirm
+    // completion of a Google Drive upload.
     private var trainingZipPrepared = false
+    private var trainingZipFileName: String? = null
+    private var trainingZipSizeBytes = 0L
+    private var trainingCaptureStartedAtMs = 0L
     private lateinit var mcVoicePack: McVoicePack
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -341,16 +356,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         trainingCaptureButton = findViewById(R.id.trainingCaptureButton)
         trainingExportButton = findViewById(R.id.trainingExportButton)
+        captureStateText = findViewById(R.id.captureStateText)
+        finishCaptureButton = findViewById(R.id.finishCaptureButton)
+        shareCaptureButton = findViewById(R.id.shareCaptureButton)
         trainingCaptureButton.setOnClickListener {
-            if (trainingRecorder.isRecording) {
-                stopTrainingCapture()
-            } else if (hasUnexportedTraining()) {
-                promptExportPreviousTraining()
-            } else {
-                confirmTrainingCapture(startGame = false)
+            when {
+                captureFinishing -> Unit
+                trainingRecorder.isRecording -> stopTrainingCapture()
+                hasPreviousTraining() -> promptExportPreviousTraining(startGame = false)
+                else -> confirmTrainingCapture(startGame = false)
             }
         }
         trainingExportButton.setOnClickListener { shareTrainingZip() }
+        finishCaptureButton.setOnClickListener { stopTrainingCapture() }
+        shareCaptureButton.setOnClickListener { shareTrainingZip() }
+        updateTrainingCaptureButton()
 
         findViewById<Button>(R.id.calibrateHoopButton).setOnClickListener {
             statusText.text = "リング中央をタップ"
@@ -379,7 +399,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     debugLogger.logEvent("START_IGNORED_ALREADY_CAPTURING")
                     statusText.text = "学習画像を収集中です。STARTの再操作は不要"
                 }
-                hasUnexportedTraining() -> promptExportPreviousTraining()
+                captureFinishing -> statusText.text = "撮影画像の保存を確認中です"
+                hasPreviousTraining() -> promptExportPreviousTraining(startGame = true)
                 else -> confirmTrainingCapture(startGame = true)
             }
         }
@@ -404,23 +425,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.b2Button).setOnClickListener { addManualScore('B', 2) }
     }
 
-    // A previous captured session stays accessible until a ZIP has been prepared.
-    // Never silently replace its shareable session on another START press.
-    private fun hasUnexportedTraining(): Boolean =
-        trainingRecorder.hasSession &&
-            trainingRecorder.savedCount > 0 &&
-            !trainingZipPrepared
+    // A previous session must remain accessible until the user explicitly
+    // acknowledges their external backup. Opening ACTION_SEND is NOT proof.
+    private fun hasPreviousTraining(): Boolean =
+        trainingRecorder.hasSession && trainingRecorder.savedCount > 0
 
-    private fun promptExportPreviousTraining() {
-        AlertDialog.Builder(this)
-            .setTitle("前回の画像を保存してください")
-            .setMessage(
-                "前回収集した${trainingRecorder.savedCount}枚がまだZIP共有されていません。" +
-                    "先に「学習ZIP共有」でGoogle Driveへ保存してから次の撮影を始めてください。"
-            )
-            .setPositiveButton("学習ZIP共有") { _, _ -> shareTrainingZip() }
-            .setNegativeButton("戻る", null)
-            .show()
+    private fun promptExportPreviousTraining(startGame: Boolean) {
+        val count = trainingRecorder.savedCount
+        if (!trainingZipPrepared) {
+            AlertDialog.Builder(this)
+                .setTitle("前回の撮影画像が端末に残っています")
+                .setMessage(
+                    "${count}枚は端末に保存済みですが、共有用ZIPをまだ作成していません。" +
+                        "先にZIPを作成してGoogle Driveへ保存してください。"
+                )
+                .setPositiveButton("ZIPを作成・共有") { _, _ -> shareTrainingZip() }
+                .setNegativeButton("戻る", null)
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("Google Driveへの保存を確認しましたか？")
+                .setMessage(
+                    "前回の${count}枚のZIPは端末に作成済みです。" +
+                        "共有画面を開いたことだけではDriveへの保存完了は確認できません。" +
+                        "Driveのファイル一覧でZIPが存在することを確認してから次へ進んでください。"
+                )
+                .setPositiveButton("Driveで確認済み・次へ") { _, _ ->
+                    confirmTrainingCapture(startGame)
+                }
+                .setNeutralButton("ZIPを再共有") { _, _ -> shareTrainingZip() }
+                .setNegativeButton("戻る", null)
+                .show()
+        }
     }
 
     private fun confirmTrainingCapture(startGame: Boolean) {
@@ -445,11 +481,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .fold(
                 onSuccess = { dir ->
                     trainingZipPrepared = false
+                    trainingZipFileName = null
+                    trainingZipSizeBytes = 0L
+                    trainingCaptureStartedAtMs = SystemClock.uptimeMillis()
                     debugLogger.logEvent(
                         "TRAINING_CAPTURE_START",
                         detail = "session=${dir.name}; intervalMs=500"
                     )
-                    statusText.text = "学習用画像を収集中（停止は「操作を開く」）"
+                    statusText.text = "学習用画像を収集中。画面下の「撮影終了」で停止"
                     updateTrainingCaptureButton()
                     true
                 },
@@ -465,14 +504,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun stopTrainingCapture() {
-        if (!trainingRecorder.isRecording) return
-        trainingRecorder.stop()
-        debugLogger.logEvent(
-            "TRAINING_CAPTURE_STOP",
-            detail = "saved=${trainingRecorder.savedCount}; errors=${trainingRecorder.failureCount}"
-        )
-        statusText.text = "学習画像${trainingRecorder.savedCount}枚を保存。次は学習ZIP共有"
-        updateTrainingCaptureButton()
+        if (!trainingRecorder.isRecording || captureFinishing) return
+        finalizeTrainingCapture()
+    }
+
+    /**
+     * Wait for all queued JPEG writes before claiming that capture completed.
+     * This checks device storage only; uploading to Drive is a later action.
+     */
+    private fun finalizeTrainingCapture(autoStopReason: String? = null) {
+        if (captureFinishing) return
+        captureFinishing = true
+        runOnUiThread {
+            statusText.text = "撮影停止中・画像の書き込み完了を確認中…"
+            updateTrainingCaptureButton()
+        }
+        trainingRecorder.finishCapture { result ->
+            runOnUiThread {
+                captureFinishing = false
+                result.onSuccess { count ->
+                    debugLogger.logEvent(
+                        if (autoStopReason != null) "TRAINING_CAPTURE_AUTO_SAVED" else "TRAINING_CAPTURE_STOP",
+                        detail = "saved=${count}; errors=${trainingRecorder.failureCount}; reason=${autoStopReason ?: "MANUAL"}"
+                    )
+                    statusText.text =
+                        "端末に${count}枚保存済み。次にZIPを作成・共有してください"
+                }.onFailure { error ->
+                    debugLogger.logEvent("TRAINING_CAPTURE_FINISH_ERROR", detail = error.toString())
+                    statusText.text = "撮影停止の確認に失敗。再撮影せずログを確認してください"
+                }
+                updateTrainingCaptureButton()
+            }
+        }
     }
 
     private fun startGameSession() {
@@ -970,16 +1033,43 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun updateTrainingCaptureButton() {
         if (!::trainingCaptureButton.isInitialized) return
+        val count = trainingRecorder.savedCount
+        val errors = trainingRecorder.failureCount
+        val recording = trainingRecorder.isRecording
         val label = when {
-            trainingRecorder.isRecording -> "■ 収集中 ${trainingRecorder.savedCount}枚"
-            trainingRecorder.hasSession && trainingRecorder.savedCount > 0 ->
-                "✔ 保存済み ${trainingRecorder.savedCount}枚"
+            captureFinishing -> "… 保存確認中"
+            recording -> "■ 収集中 ${count}枚"
+            trainingRecorder.hasSession && count > 0 ->
+                if (trainingZipPrepared) "✔ ZIP作成済み" else "✔ 端末保存 ${count}枚"
             else -> "● 画像のみ収集"
         }
         if (trainingCaptureButton.text.toString() != label) trainingCaptureButton.text = label
+        trainingCaptureButton.isEnabled = !captureFinishing
+        finishCaptureButton.visibility = if (recording && !captureFinishing) View.VISIBLE else View.GONE
+        shareCaptureButton.visibility =
+            if (!recording && !captureFinishing && trainingRecorder.hasSession && count > 0)
+                View.VISIBLE else View.GONE
+        val elapsedSeconds = if (recording && trainingCaptureStartedAtMs > 0L) {
+            ((SystemClock.uptimeMillis() - trainingCaptureStartedAtMs).coerceAtLeast(0L) / 1000L)
+        } else 0L
+        val elapsed = "%02d:%02d".format(Locale.US, elapsedSeconds / 60, elapsedSeconds % 60)
+        captureStateText.text = when {
+            captureFinishing -> "保存処理中…\nJPEG書き込み完了を確認中"
+            recording -> "● 撮影中 ${elapsed} / ${count}枚\n保存失敗 ${errors}件"
+            trainingRecorder.hasSession && count > 0 && trainingZipPrepared ->
+                "✔ 端末に${count}枚保存\nZIP: ${trainingZipFileName ?: "作成済み"}\n" +
+                    "サイズ: ${"%.1f".format(Locale.US, trainingZipSizeBytes / 1048576.0)} MiB / Drive未確認"
+            trainingRecorder.hasSession && count > 0 ->
+                "✔ 端末に${count}枚保存\nZIP未作成 / Drive保存は未確認"
+            else -> "撮影待機"
+        }
     }
 
     private fun shareTrainingZip() {
+        if (captureFinishing) {
+            statusText.text = "画像の書き込み完了後に共有してください"
+            return
+        }
         if (!trainingRecorder.hasSession) {
             statusText.text = "先に学習用画像を収集してください"
             return
@@ -987,6 +1077,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         trainingRecorder.stop()
         updateTrainingCaptureButton()
         trainingExportButton.isEnabled = false
+        shareCaptureButton.isEnabled = false
         statusText.text = "学習用ZIP生成中…"
         debugLogger.logEvent(
             "TRAINING_ZIP_REQUEST",
@@ -995,6 +1086,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         trainingRecorder.exportZip { result ->
             runOnUiThread {
                 trainingExportButton.isEnabled = true
+                shareCaptureButton.isEnabled = true
                 result.onSuccess { file ->
                     try {
                         val uri = FileProvider.getUriForFile(
@@ -1013,9 +1105,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                             "TRAINING_ZIP_READY",
                             detail = "file=${file.name}; bytes=${file.length()}"
                         )
-                        statusText.text = "学習用ZIPを共有できます"
-                        startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
                         trainingZipPrepared = true
+                        trainingZipFileName = file.name
+                        trainingZipSizeBytes = file.length()
+                        statusText.text =
+                            "ZIP: ${file.name} / ${trainingRecorder.savedCount}枚 / " +
+                                "${"%.1f".format(Locale.US, file.length() / 1048576.0)} MiB。Drive保存は未確認"
+                        updateTrainingCaptureButton()
+                        startActivity(Intent.createChooser(intent, "学習用ZIPを共有"))
                     } catch (e: Exception) {
                         debugLogger.logEvent("TRAINING_ZIP_SHARE_ERROR", detail = e.toString())
                         statusText.text = "ZIP共有に失敗"
@@ -1026,6 +1123,50 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+    }
+
+
+    /**
+     * CameraX RGBA_8888 can have padded rows on some devices.
+     * Unpacking padded frames protects both training JPEGs and inference input.
+     * Called on the single camera analyzer executor.
+     */
+    private fun copyRgbaToBitmap(image: ImageProxy, bitmap: Bitmap) {
+        val plane = image.planes.first()
+        val bytesPerRow = image.width * 4
+        val stride = plane.rowStride
+        require(plane.pixelStride == 4 && stride >= bytesPerRow) {
+            "Unexpected RGBA pixel/row stride: ${plane.pixelStride}/$stride"
+        }
+        if (!cameraLayoutReported) {
+            cameraLayoutReported = true
+            debugLogger.logEvent(
+                "CAMERA_PIXEL_LAYOUT",
+                detail = "width=${image.width}; height=${image.height}; " +
+                    "pixelStride=${plane.pixelStride}; rowStride=$stride; " +
+                    "padded=${stride != bytesPerRow}"
+            )
+        }
+        val source = plane.buffer.duplicate()
+        source.rewind()
+        if (stride == bytesPerRow) {
+            bitmap.copyPixelsFromBuffer(source)
+            return
+        }
+        val required = bytesPerRow * image.height
+        val packed = packedRgba?.takeIf { it.capacity() >= required }
+            ?: ByteBuffer.allocateDirect(required).also { packedRgba = it }
+        if (packedRgbaScratch.size < bytesPerRow) {
+            packedRgbaScratch = ByteArray(bytesPerRow)
+        }
+        packed.clear()
+        for (y in 0 until image.height) {
+            source.position(y * stride)
+            source.get(packedRgbaScratch, 0, bytesPerRow)
+            packed.put(packedRgbaScratch, 0, bytesPerRow)
+        }
+        packed.flip()
+        bitmap.copyPixelsFromBuffer(packed)
     }
 
     private fun startCamera() {
@@ -1063,9 +1204,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     val motionProposals = motionBallProposer.update(image)
 
-                    val buffer = image.planes[0].buffer
-                    buffer.rewind()
-                    bitmap.copyPixelsFromBuffer(buffer)
+                    copyRgbaToBitmap(image, bitmap)
                     val wasCapturing = trainingRecorder.isRecording
                     trainingRecorder.captureIfDue(bitmap, rotationDegrees, frameTime)
                     if (wasCapturing && !trainingRecorder.isRecording &&
@@ -1077,10 +1216,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 "frames=${trainingRecorder.savedCount}; " +
                                 "errors=${trainingRecorder.failureCount}"
                         )
-                        runOnUiThread {
-                            statusText.text = "画像収集完了。次は学習ZIP共有"
-                            updateTrainingCaptureButton()
-                        }
+                        finalizeTrainingCapture(trainingRecorder.automaticStopReason)
                     }
 
                     // v0.7: keep a dense three-frame temporal window even when
@@ -1416,7 +1552,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                             updateTrainingCaptureButton()
                             perfText.text =
-                                "v0.7.10 SCENE ${latestYoloInferenceMs}ms | " +
+                                "v0.7.12 SCENE ${latestYoloInferenceMs}ms | " +
                                     "BALL ${latestBallInferenceMs}ms | " +
                                     "MOTION ${motionProposals.size} | " +
                                     "CTX ${ballContextTracker.currentMode()} | " +

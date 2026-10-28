@@ -51,6 +51,47 @@ class TrainingFrameRecorder(context: Context) {
     @Volatile var automaticStopReason: String? = null
         private set
 
+    /**
+     * Recover the latest previously captured, CSV-indexed session after the
+     * Android process restarts. This leaves files untouched and allows the
+     * user to generate/share a ZIP instead of silently losing the UI handle.
+     * Incomplete or orphaned JPEGs are not counted as confirmed captures.
+     */
+    init {
+        runCatching {
+            val candidates = root.listFiles()
+                ?.filter { it.isDirectory && it.name.startsWith("session_") }
+                ?.sortedByDescending { it.name }
+                .orEmpty()
+            for (dir in candidates) {
+                val csv = File(dir, "frames.csv")
+                if (!csv.isFile) continue
+                var count = 0
+                var bytes = 0L
+                csv.bufferedReader().use { reader ->
+                    if (reader.readLine()?.startsWith("filename,") != true) return@use
+                    reader.forEachLine { line ->
+                        val name = line.substringBefore(',')
+                        if (name.startsWith("images/frame_") &&
+                            name.endsWith(".jpg") &&
+                            !name.contains("..")
+                        ) {
+                            val image = File(dir, name)
+                            if (image.isFile && image.length() > 0L) {
+                                count++
+                                bytes += image.length()
+                            }
+                        }
+                    }
+                }
+                if (count > 0) {
+                    session = Session(dir, AtomicInteger(count), AtomicLong(bytes))
+                    break
+                }
+            }
+        }
+    }
+
     val savedCount: Int get() = session?.saved?.get() ?: 0
     val failureCount: Int get() = session?.failures?.get() ?: 0
     val hasSession: Boolean get() = session != null
@@ -91,6 +132,26 @@ class TrainingFrameRecorder(context: Context) {
     fun stop(): Int {
         isRecording = false
         return savedCount
+    }
+
+    /**
+     * Stops capture and reports the final JPEG count only after all queued
+     * JPEG writes and frames.csv appends have finished on the serial worker.
+     * This confirms local device persistence, NOT cloud backup.
+     */
+    @Synchronized
+    fun finishCapture(onComplete: (Result<Int>) -> Unit) {
+        isRecording = false
+        val current = session
+        if (current == null) {
+            onComplete(Result.failure(IllegalStateException("No training session")))
+            return
+        }
+        runCatching {
+            worker.execute {
+                onComplete(Result.success(current.saved.get()))
+            }
+        }.onFailure { onComplete(Result.failure(it)) }
     }
 
     /**
