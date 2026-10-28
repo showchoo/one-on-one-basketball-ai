@@ -77,6 +77,41 @@ class FieldLogTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Different or divergent"):
                 summarize([p, q])
 
+    def test_scene_candidates_are_not_confused_with_fused_track(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "scene.csv"
+            original = sample_events()
+            original.append((
+                "2026-10-28 10:00:05.000", "SCENE_YOLO_RESULT",
+                "ballCandidates=1; bestBallConfidence=0.42; "
+                "playerCandidates=2; hoopCandidates=1; inferenceMs=121; "
+                "acceptedForFusion=false"
+            ))
+            original.append((
+                "2026-10-28 10:00:06.000", "SCENE_YOLO_RESULT",
+                "ballCandidates=0; bestBallConfidence=0.0; "
+                "playerCandidates=2; hoopCandidates=1; inferenceMs=103; "
+                "acceptedForFusion=true"
+            ))
+            save_csv(path, original)
+            r = summarize([path])["scene_yolo_model"]
+            self.assertTrue(r["diagnostic_available"])
+            self.assertEqual(r["reports"], 2)
+            self.assertEqual(r["with_ball_candidate"], 1)
+            self.assertEqual(r["best_ball_confidence_max"], 0.42)
+            self.assertEqual(r["already_locked_for_fusion"], 1)
+            self.assertEqual(r["inference_ms_p50"], 121)
+
+    def test_old_logs_do_not_invent_scene_model_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "old.csv"
+            save_csv(path, sample_events())
+            r = summarize([path])["scene_yolo_model"]
+            self.assertFalse(r["diagnostic_available"])
+            self.assertIsNone(r["best_ball_confidence_max"])
+            self.assertIsNone(r["with_ball_candidate"])
+
     def test_no_frames_in_short_log_is_not_false_recall(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
