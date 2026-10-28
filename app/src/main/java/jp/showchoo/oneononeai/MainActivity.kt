@@ -130,6 +130,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var advancedControls: LinearLayout
     private lateinit var debugLogger: DebugLogger
     private lateinit var trainingRecorder: TrainingFrameRecorder
+    private lateinit var folderBackup: CaptureFolderBackup
+    private var backupProviderWritten = false
+    private var backupStep = "保存処理中…"
     private lateinit var trainingCaptureButton: Button
     private lateinit var trainingExportButton: Button
     private lateinit var captureStateText: TextView
@@ -146,6 +149,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera() else statusText.text = "カメラ権限が必要です"
+    }
+
+    private val backupFolderPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching { folderBackup.setDestination(uri) }
+                .onSuccess {
+                    debugLogger.logEvent("TRAINING_BACKUP_FOLDER_CONFIGURED")
+                    statusText.text = "Googleドライブの自動保存先を設定しました。次回撮影から利用します"
+                }
+                .onFailure { error ->
+                    debugLogger.logEvent("TRAINING_BACKUP_FOLDER_ERROR", detail = error.toString())
+                    statusText.text = "保存先設定に失敗。Driveへ共有（手動）を利用してください"
+                }
+        }
+        updateTrainingCaptureButton()
     }
 
     private val mcPackPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -187,6 +207,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         debugLogger = DebugLogger(applicationContext)
         trainingRecorder = TrainingFrameRecorder(applicationContext)
+        folderBackup = CaptureFolderBackup(applicationContext)
         mcVoicePack = McVoicePack(applicationContext)
         tts = TextToSpeech(this, this)
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -367,7 +388,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 else -> confirmTrainingCapture(startGame = false)
             }
         }
-        trainingExportButton.setOnClickListener { shareTrainingZip() }
+        trainingExportButton.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Googleドライブの自動保存先")
+                .setMessage(
+                    "「1on1 Basketball AI / 撮影ZIP」を選択してください。初回のみ設定します。" +
+                    "撮影終了後、ZIPを自動作成して日付別に保存します。" +
+                    "Googleドライブがフォルダ選択に対応しない場合は手動共有を使ってください。" +
+                    "クラウド同期完了はアプリ側から確認できません。"
+                )
+                .setPositiveButton("フォルダを選ぶ") { _, _ -> backupFolderPicker.launch(null) }
+                .setNegativeButton("キャンセル", null)
+                .show()
+        }
         finishCaptureButton.setOnClickListener { stopTrainingCapture() }
         shareCaptureButton.setOnClickListener { shareTrainingZip() }
         updateTrainingCaptureButton()
@@ -444,7 +477,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .show()
         } else {
             AlertDialog.Builder(this)
-                .setTitle("Google Driveへの保存を確認しましたか？")
+                .setTitle("Google DriveでZIPを確認しましたか？")
                 .setMessage(
                     "前回の${count}枚のZIPは端末に作成済みです。" +
                         "共有画面を開いたことだけではDriveへの保存完了は確認できません。" +
@@ -465,7 +498,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .setMessage(
                 "カメラ映像を約0.5秒おきに端末へ保存します。" +
                     "人物の顔や周囲の人も映ります。撮影対象者の了承を確認してください。" +
-                    "画像は自動送信されません。"
+                    "自動保存先が設定済みの場合、終了時にそのDriveフォルダへZIPを書き込みます。"
             )
             .setPositiveButton(if (startGame) "両方開始" else "収集開始") { _, _ ->
                 if (beginTrainingCapture() && startGame) {
@@ -481,6 +514,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .fold(
                 onSuccess = { dir ->
                     trainingZipPrepared = false
+                    backupProviderWritten = false
                     trainingZipFileName = null
                     trainingZipSizeBytes = 0L
                     trainingCaptureStartedAtMs = SystemClock.uptimeMillis()
@@ -515,25 +549,78 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun finalizeTrainingCapture(autoStopReason: String? = null) {
         if (captureFinishing) return
         captureFinishing = true
+        backupStep = "JPEG書き込み完了を確認中…"
         runOnUiThread {
-            statusText.text = "撮影停止中・画像の書き込み完了を確認中…"
+            statusText.text = backupStep
             updateTrainingCaptureButton()
         }
         trainingRecorder.finishCapture { result ->
             runOnUiThread {
-                captureFinishing = false
                 result.onSuccess { count ->
                     debugLogger.logEvent(
                         if (autoStopReason != null) "TRAINING_CAPTURE_AUTO_SAVED" else "TRAINING_CAPTURE_STOP",
                         detail = "saved=${count}; errors=${trainingRecorder.failureCount}; reason=${autoStopReason ?: "MANUAL"}"
                     )
-                    statusText.text =
-                        "端末に${count}枚保存済み。次にZIPを作成・共有してください"
+                    if (count > 0) prepareZipAndBackup() else {
+                        captureFinishing = false
+                        statusText.text = "撮影終了。JPEGは0枚です。ログを確認してください"
+                        updateTrainingCaptureButton()
+                    }
                 }.onFailure { error ->
+                    captureFinishing = false
                     debugLogger.logEvent("TRAINING_CAPTURE_FINISH_ERROR", detail = error.toString())
-                    statusText.text = "撮影停止の確認に失敗。再撮影せずログを確認してください"
+                    statusText.text = "撮影停止の確認に失敗。端末JPEGは削除しないでください"
+                    updateTrainingCaptureButton()
                 }
-                updateTrainingCaptureButton()
+            }
+        }
+    }
+
+    /** Called after the serial JPEG writer reports local completion. */
+    private fun prepareZipAndBackup() {
+        backupStep = "端末にZIPを作成中…"
+        updateTrainingCaptureButton()
+        trainingRecorder.exportZip { result ->
+            runOnUiThread {
+                result.onSuccess { file ->
+                    trainingZipPrepared = true
+                    trainingZipFileName = file.name
+                    trainingZipSizeBytes = file.length()
+                    debugLogger.logEvent("TRAINING_ZIP_READY",
+                        detail = "file=${file.name}; bytes=${file.length()}; frames=${trainingRecorder.savedCount}")
+                    if (folderBackup.hasDestination()) {
+                        backupStep = "Driveフォルダへ書き込み中…"
+                        statusText.text = backupStep
+                        updateTrainingCaptureButton()
+                        folderBackup.copy(file) { backupResult ->
+                            runOnUiThread {
+                                captureFinishing = false
+                                backupResult.onSuccess { receipt ->
+                                    backupProviderWritten = true
+                                    debugLogger.logEvent("TRAINING_FOLDER_WRITE_COMPLETE",
+                                        detail = "file=${receipt.name}; date=${receipt.date}; bytes=${receipt.bytes}; cloudSync=UNVERIFIED")
+                                    statusText.text =
+                                        "ZIPをDriveフォルダへ書込完了。クラウド同期は未確認"
+                                }.onFailure { e ->
+                                    backupProviderWritten = false
+                                    debugLogger.logEvent("TRAINING_FOLDER_WRITE_ERROR", detail = e.toString())
+                                    statusText.text =
+                                        "フォルダへの書込失敗：${e.message}。端末ZIPは保持。手動で共有してください"
+                                }
+                                updateTrainingCaptureButton()
+                            }
+                        }
+                    } else {
+                        captureFinishing = false
+                        statusText.text = "ZIP作成済み。自動保存先未設定のため手動共有してください"
+                        updateTrainingCaptureButton()
+                    }
+                }.onFailure { e ->
+                    captureFinishing = false
+                    debugLogger.logEvent("TRAINING_ZIP_ERROR", detail = e.toString())
+                    statusText.text = "ZIP作成失敗。端末JPEGは保持されています"
+                    updateTrainingCaptureButton()
+                }
             }
         }
     }
@@ -1054,11 +1141,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } else 0L
         val elapsed = "%02d:%02d".format(Locale.US, elapsedSeconds / 60, elapsedSeconds % 60)
         captureStateText.text = when {
-            captureFinishing -> "保存処理中…\nJPEG書き込み完了を確認中"
+            captureFinishing -> backupStep
             recording -> "● 撮影中 ${elapsed} / ${count}枚\n保存失敗 ${errors}件"
             trainingRecorder.hasSession && count > 0 && trainingZipPrepared ->
                 "✔ 端末に${count}枚保存\nZIP: ${trainingZipFileName ?: "作成済み"}\n" +
-                    "サイズ: ${"%.1f".format(Locale.US, trainingZipSizeBytes / 1048576.0)} MiB / Drive未確認"
+                    "サイズ: ${"%.1f".format(Locale.US, trainingZipSizeBytes / 1048576.0)} MiB\n" +
+                    (if (backupProviderWritten) "Driveフォルダ書込済み・クラウド同期未確認"
+                     else "Driveへの保存は未確認")
             trainingRecorder.hasSession && count > 0 ->
                 "✔ 端末に${count}枚保存\nZIP未作成 / Drive保存は未確認"
             else -> "撮影待機"
@@ -1716,6 +1805,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         debugLogger.logEvent("APP_END", scoreA = game.scoreA, scoreB = game.scoreB)
         debugLogger.close()
         trainingRecorder.close()
+        folderBackup.close()
         super.onDestroy()
         cameraExecutor.shutdown()
         yoloExecutor.shutdown()
