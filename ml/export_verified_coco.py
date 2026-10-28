@@ -69,7 +69,8 @@ def load_session(folder: Path):
         source_image = folder / relative
         if not source_image.is_file():
             raise FileNotFoundError(source_image)
-        digest = hashlib.file_digest(source_image.open("rb"), "sha256").hexdigest()
+        with source_image.open("rb") as image_stream:
+            digest = hashlib.file_digest(image_stream, "sha256").hexdigest()
         expected = row.get("original_sha256", "")
         if expected and digest != expected:
             raise ValueError(f"Image changed since ingest: {source_image}")
